@@ -4,6 +4,59 @@ using SchoolManagement.Api.Models;
 namespace SchoolManagement.Api.Dtos;
 
 
+// Dtos/TransferStudentLocalRequest.cs
+public class TransferStudentLocalRequest
+{
+    public int CurrentSchoolId { get; set; }          // ✅ المدرسة الحالية
+    public int LocalStudentNumber { get; set; }       // ✅ Local ID للطالب
+    public int NewSchoolId { get; set; }              // ✅ المدرسة الجديدة
+    public int? LocalGradeNumber { get; set; }        // ✅ Local ID للصف الجديد
+    public int? LocalSectionNumber { get; set; }      // ✅ Local ID للشعبة الجديدة
+}
+
+// Dtos/TransferEmployeeLocalRequest.cs
+public class TransferEmployeeLocalRequest
+{
+    public int CurrentSchoolId { get; set; }          // ✅ المدرسة الحالية
+    public int LocalEmployeeNumber { get; set; }      // ✅ Local ID للموظف
+    public int NewSchoolId { get; set; }              // ✅ المدرسة الجديدة
+    public EmployeeRole NewRole { get; set; }         // ✅ الدور الجديد
+}
+// Dtos/LoanLocalRequest.cs
+public class LoanLocalRequest
+{
+    public int LocalBookNumber { get; set; }      // ✅ Local ID للكتاب
+    public int LocalMemberNumber { get; set; }    // ✅ Local ID للعضو
+    public DateOnly DueDate { get; set; }
+}
+// Dtos/ReservationLocalRequest.cs
+public class ReservationLocalRequest
+{
+    public int LocalBookNumber { get; set; }      // ✅ Local ID للكتاب
+    public int LocalMemberNumber { get; set; }    // ✅ Local ID للعضو
+}
+
+// Dtos/ReservationDecisionRequest.cs
+public class ReservationDecisionRequest
+{
+    public ReservationStatus Status { get; set; }
+}
+// Dtos/BookLoanDto.cs (اختياري)
+public class BookLoanDto
+{
+    public int Id { get; set; }
+    public int LocalLoanNumber { get; set; }
+    public int LocalBookNumber { get; set; }
+    public string BookTitle { get; set; } = "";
+    public int LocalMemberNumber { get; set; }
+    public string? StudentName { get; set; }
+    public DateOnly LoanDate { get; set; }
+    public DateOnly DueDate { get; set; }
+    public DateOnly? ReturnDate { get; set; }
+    public string Status { get; set; } = "";
+    public bool IsOverdue { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
 public record LoginRequest(
     [Required, EmailAddress] string Email,
     [Required] string Password,
@@ -244,9 +297,63 @@ public class TeacherGradeLocalRequest
     public int LocalSubjectId { get; set; }
     public int LocalSectionNumber { get; set; }
 }
+public class PerformanceReportLocalRequest
+{
+    public int LocalStudentNumber { get; set; }
+    public int LocalSubjectId { get; set; }
+    public int Semester { get; set; }
+    public string? Behavior { get; set; }
+    public string? Notes { get; set; }
+}
+// Dtos/EmployeeCreateLocalRequest.cs
+public class EmployeeCreateLocalRequest
+{
+    public string Name { get; set; } = "";
+    public string Email { get; set; } = "";
+    public string Password { get; set; } = "";
+    public string? NationalId { get; set; }
+    public string? Phone { get; set; }
+    public string? Address { get; set; }
+    public DateTime? BirthDate { get; set; }
+    public string? Qualification { get; set; }
+    public EmployeeRole Role { get; set; }
+}
 
-// Dtos/StudentUpdateRequest.cs
-public class StudentUpdateRequest
+// Dtos/EmployeeUpdateLocalRequest.cs
+public class EmployeeUpdateLocalRequest
+{
+    public string? Name { get; set; }
+    public string? Email { get; set; }
+    public string? Password { get; set; }
+    public string? NationalId { get; set; }
+    public string? Phone { get; set; }
+    public string? Address { get; set; }
+    public DateTime? BirthDate { get; set; }
+    public string? Qualification { get; set; }
+    public EmployeeRole? Role { get; set; }
+}
+public class MarkLocalRequest
+{
+    public int LocalStudentNumber { get; set; }
+    public int LocalSubjectId { get; set; }
+    public int Semester { get; set; }
+    public decimal Oral { get; set; }
+    public decimal Quiz1 { get; set; }
+    public decimal Quiz2 { get; set; }
+    public decimal Homework { get; set; }
+    public decimal FinalExam { get; set; }
+}
+public class QuizMarkLocalRequest
+{
+    public int LocalStudentNumber { get; set; }
+    public int LocalSubjectId { get; set; }
+    public int Semester { get; set; }
+    public int QuizNumber { get; set; }
+    public int Score { get; set; }
+    public int MaxScore { get; set; }
+    public string? Notes { get; set; }
+}
+public class StudentUpdateRequesting
 {
     public string? Name { get; set; }
     public string? Email { get; set; }

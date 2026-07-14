@@ -77,6 +77,7 @@ public class Student
     public string? Photo { get; set; }
     public string? FcmToken { get; set; }
     
+    
     // حالة الطالب
     public bool DismissalWarning { get; set; }
     public bool IsPhoneVerified { get; set; } = false;  // ← جديد: التحقق من رقم الهاتف

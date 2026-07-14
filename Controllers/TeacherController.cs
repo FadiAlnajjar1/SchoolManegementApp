@@ -21,58 +21,63 @@ public class TeacherController(
     private int SchoolId => User.GetSchoolId();
 
     // ============================================
-    // المواد التي يدرسها المعلم (باستخدام TeacherGrade)
+    // المواد التي يدرسها المعلم (باستخدام Local IDs)
     // ============================================
 
     [HttpGet("subjects")]
-public async Task<IActionResult> GetSubjects()
-{
-    var subjects = await db.TeacherGrades
-        .Where(t => t.TeacherId == TeacherId)
-        .Include(t => t.Subject)
-            .ThenInclude(s => s!.Grade)
-        .Include(t => t.Section)
-        .Select(t => new
-        {
-            t.SubjectId,
-            LocalSubjectId = t.Subject != null ? t.Subject.LocalSubjectId : 0,
-            SubjectName = t.Subject != null ? t.Subject.Name : null,
-            LocalGradeNumber = t.Subject != null && t.Subject.Grade != null ? t.Subject.Grade.LocalGradeNumber : 0,
-            GradeName = t.Subject != null && t.Subject.Grade != null ? t.Subject.Grade.Name : null,
-            t.SectionId,
-            SectionName = t.Section != null ? t.Section.Name : null,
-            LocalSectionNumber = t.Section != null ? t.Section.LocalSectionNumber : 0,
-            t.CreatedAt
-        })
-        .ToListAsync();
-
-    var result = subjects
-        .GroupBy(s => new { 
-            s.SubjectId, 
-            s.LocalSubjectId,
-            s.SubjectName, 
-            s.LocalGradeNumber, 
-            s.GradeName 
-        })
-        .Select(g => new
-        {
-            LocalSubjectId = g.Key.LocalSubjectId,
-            SubjectName = g.Key.SubjectName,
-            LocalGradeNumber = g.Key.LocalGradeNumber,
-            GradeName = g.Key.GradeName,
-            Sections = g.Select(s => new
+    public async Task<IActionResult> GetSubjects()
+    {
+        var subjects = await db.TeacherGrades
+            .Where(t => t.TeacherId == TeacherId)
+            .Include(t => t.Subject)
+                .ThenInclude(s => s!.Grade)
+            .Include(t => t.Section)
+            .Select(t => new
             {
-                s.SectionId,
-                SectionName = s.SectionName,
-                LocalSectionNumber = s.LocalSectionNumber,
-                s.CreatedAt
-            }).ToList()
-        })
-        .OrderBy(g => g.LocalGradeNumber)
-        .ToList();
+                t.SubjectId,
+                LocalSubjectId = t.Subject != null ? t.Subject.LocalSubjectId : 0,
+                SubjectName = t.Subject != null ? t.Subject.Name : null,
+                LocalGradeNumber = t.Subject != null && t.Subject.Grade != null ? t.Subject.Grade.LocalGradeNumber : 0,
+                GradeName = t.Subject != null && t.Subject.Grade != null ? t.Subject.Grade.Name : null,
+                t.SectionId,
+                SectionName = t.Section != null ? t.Section.Name : null,
+                LocalSectionNumber = t.Section != null ? t.Section.LocalSectionNumber : 0,
+                t.CreatedAt
+            })
+            .ToListAsync();
 
-    return Ok(result);
-}
+        var result = subjects
+            .GroupBy(s => new { 
+                s.SubjectId, 
+                s.LocalSubjectId,
+                s.SubjectName, 
+                s.LocalGradeNumber, 
+                s.GradeName 
+            })
+            .Select(g => new
+            {
+                LocalSubjectId = g.Key.LocalSubjectId,
+                SubjectName = g.Key.SubjectName,
+                LocalGradeNumber = g.Key.LocalGradeNumber,
+                GradeName = g.Key.GradeName,
+                Sections = g.Select(s => new
+                {
+                    s.SectionId,
+                    SectionName = s.SectionName,
+                    LocalSectionNumber = s.LocalSectionNumber,
+                    s.CreatedAt
+                }).ToList()
+            })
+            .OrderBy(g => g.LocalGradeNumber)
+            .ToList();
+
+        return Ok(new
+        {
+            success = true,
+            message = "تم جلب المواد بنجاح",
+            data = result
+        });
+    }
 
     // ============================================
     // الجدول الدراسي للمعلم (صورة)
@@ -86,33 +91,50 @@ public async Task<IActionResult> GetSubjects()
                         s.TeacherId == TeacherId && 
                         s.Type == ScheduleImageType.Teacher)
             .OrderByDescending(s => s.CreatedAt)
+            .Select(s => new
+            {
+                s.Id,
+                s.ImageUrl,
+                s.Description,
+                s.CreatedAt
+            })
             .FirstOrDefaultAsync();
 
         if (image is null)
-            return NotFound(new { message = "لا توجد صورة جدول لك" });
+            return NotFound(new { success = false, message = "لا توجد صورة جدول لك" });
 
         return Ok(new
         {
-            image.Id,
-            image.ImageUrl,
-            image.Description,
-            image.CreatedAt
+            success = true,
+            message = "تم جلب صورة الجدول بنجاح",
+            data = image
         });
     }
 
     // ============================================
-    // حضور الطلاب
+    // حضور الطلاب (باستخدام Local IDs)
     // ============================================
 
     [HttpPost("attendance")]
-    public async Task<IActionResult> TakeAttendance(StudentAttendanceRequest request)
+    public async Task<IActionResult> TakeAttendance(StudentAttendanceLocalRequest request)
     {
-        // التحقق من أن المعلم يدرس هذه الشعبة
+        // ✅ البحث عن الشعبة باستخدام Local IDs
+        var section = await db.Sections
+            .Include(s => s.Grade)
+            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                      s.Grade != null &&
+                                      s.Grade.LocalGradeNumber == request.LocalGradeNumber &&
+                                      s.LocalSectionNumber == request.LocalSectionNumber);
+
+        if (section is null)
+            return BadRequest(new { success = false, message = $"لا توجد شعبة برقم {request.LocalSectionNumber} في الصف {request.LocalGradeNumber}" });
+
+        // ✅ التحقق من أن المعلم يدرس هذه الشعبة
         var teachesSection = await db.TeacherGrades
-            .AnyAsync(tg => tg.TeacherId == TeacherId && tg.SectionId == request.SectionId);
+            .AnyAsync(tg => tg.TeacherId == TeacherId && tg.SectionId == section.Id);
         
         if (!teachesSection)
-            return BadRequest(new { message = "أنت لا تدرس في هذه الشعبة" });
+            return BadRequest(new { success = false, message = "أنت لا تدرس في هذه الشعبة" });
 
         // التحقق من وجود صورة جدول للمعلم
         var hasScheduleImage = await db.ScheduleImages
@@ -121,60 +143,80 @@ public async Task<IActionResult> GetSubjects()
                           s.Type == ScheduleImageType.Teacher);
         
         if (!hasScheduleImage)
-            return BadRequest(new { message = "لم يتم رفع جدولك الدراسي بعد، يرجى التواصل مع الإدارة" });
+            return BadRequest(new { success = false, message = "لم يتم رفع جدولك الدراسي بعد، يرجى التواصل مع الإدارة" });
 
-        return await AttendanceHelper.RecordAsync(db, request, TeacherId, this);
+        // ✅ تحويل الطلب إلى استخدام SectionId
+        var attendanceRequest = new StudentAttendanceRequest
+        {
+            SectionId = section.Id,
+            Date = DateOnly.FromDateTime(DateTime.Today),
+            Entries = request.Entries.Select(e => new StudentAttendanceEntry
+            {
+                StudentId = e.LocalStudentNumber,
+                Status = e.Status,
+                Justification = e.Justification
+            }).ToList()
+        };
+
+        return await AttendanceHelper.RecordAsync(db, attendanceRequest, TeacherId, this);
     }
 
     // ============================================
-    // إدارة العلامات (باستخدام TeacherSubject)
+    // إدارة العلامات (باستخدام Local IDs)
     // ============================================
 
     [HttpPost("marks")]
-    public async Task<IActionResult> UpsertMark(MarkRequest request)
+    public async Task<IActionResult> UpsertMark(MarkLocalRequest request)
     {
         var blocked = await rules.ValidateSecondPeriodAttendanceTakenAsync(TeacherId);
         if (blocked is not null) 
             return StatusCode(403, new { message = blocked });
 
-        // التحقق من أن المادة يدرسها المعلم (باستخدام TeacherSubject)
-        var subject = await db.TeacherSubjects
-            .Include(t => t.Subject)
-            .FirstOrDefaultAsync(t => t.TeacherId == TeacherId && t.SubjectId == request.SubjectId);
-        
-        if (subject is null) 
-            return BadRequest(new { message = "هذه المادة ليست من موادك" });
+        // ✅ البحث عن المادة باستخدام LocalSubjectId
+        var subject = await db.Subjects
+            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                      s.LocalSubjectId == request.LocalSubjectId);
 
-        // التحقق من وجود الطالب في مدارس المعلم
-        var schoolIds = await GetSchoolIdsAsync();
+        if (subject is null)
+            return BadRequest(new { success = false, message = $"لا توجد مادة برقم {request.LocalSubjectId}" });
+
+        // ✅ التحقق من أن المادة يدرسها المعلم
+        var teacherSubject = await db.TeacherSubjects
+            .FirstOrDefaultAsync(t => t.TeacherId == TeacherId && t.SubjectId == subject.Id);
+        
+        if (teacherSubject is null) 
+            return BadRequest(new { success = false, message = "هذه المادة ليست من موادك" });
+
+        // ✅ البحث عن الطالب باستخدام LocalStudentNumber
         var student = await db.Students
-            .FirstOrDefaultAsync(s => s.Id == request.StudentId && schoolIds.Contains(s.SchoolId));
+            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                      s.LocalStudentNumber == request.LocalStudentNumber);
         
         if (student is null) 
-            return BadRequest(new { message = "الطالب غير موجود في مدارسك" });
+            return BadRequest(new { success = false, message = $"لا يوجد طالب برقم {request.LocalStudentNumber}" });
 
         // التحقق من حدود العلامات
         var config = await db.MarkConfigs
-            .FirstOrDefaultAsync(c => c.SchoolId == subject.Subject!.SchoolId)
-            ?? new MarkConfig { SchoolId = subject.Subject.SchoolId };
+            .FirstOrDefaultAsync(c => c.SchoolId == SchoolId)
+            ?? new MarkConfig { SchoolId = SchoolId };
 
         if (request.Oral > config.MaxOral || request.Quiz1 > config.MaxQuiz1 ||
             request.Quiz2 > config.MaxQuiz2 || request.Homework > config.MaxHomework ||
             request.FinalExam > config.MaxFinalExam)
-            return BadRequest(new { message = "علامة تتجاوز الحد الأعلى المضبوط للمدرسة" });
+            return BadRequest(new { success = false, message = "علامة تتجاوز الحد الأعلى المضبوط للمدرسة" });
 
         // البحث عن علامة موجودة أو إنشاء جديدة
         var mark = await db.Marks
-            .FirstOrDefaultAsync(m => m.StudentId == request.StudentId && 
-                                      m.SubjectId == request.SubjectId && 
+            .FirstOrDefaultAsync(m => m.StudentId == student.Id && 
+                                      m.SubjectId == subject.Id && 
                                       m.Semester == request.Semester);
         
         if (mark is null)
         {
             mark = new Mark 
             { 
-                StudentId = request.StudentId, 
-                SubjectId = request.SubjectId, 
+                StudentId = student.Id, 
+                SubjectId = subject.Id, 
                 Semester = request.Semester 
             };
             db.Marks.Add(mark);
@@ -193,19 +235,20 @@ public async Task<IActionResult> GetSubjects()
 
         await notifier.SendAsync(student.Id, UserType.Student,
             "علامة جديدة", 
-            $"رُصدت علامتك في {subject.Subject!.Name} (الفصل {request.Semester}): {mark.Total}", 
+            $"رُصدت علامتك في {subject.Name} (الفصل {request.Semester}): {mark.Total}", 
             "mark");
 
         return Ok(new
         {
+            success = true,
             message = "تم تسجيل العلامة بنجاح",
-            mark = new
+            data = new
             {
                 mark.Id,
-                mark.StudentId,
+                StudentLocalNumber = student.LocalStudentNumber,
                 StudentName = student.Name,
-                mark.SubjectId,
-                SubjectName = subject.Subject.Name,
+                LocalSubjectId = subject.LocalSubjectId,
+                SubjectName = subject.Name,
                 mark.Semester,
                 mark.Oral,
                 mark.Quiz1,
@@ -219,47 +262,54 @@ public async Task<IActionResult> GetSubjects()
     }
 
     // ============================================
-    // علامات المذاكرات (Quizzes/Assignments)
+    // علامات المذاكرات (باستخدام Local IDs)
     // ============================================
 
     [HttpPost("marks/quiz")]
-    public async Task<IActionResult> AddQuizMark(QuizMarkRequest request)
+    public async Task<IActionResult> AddQuizMark(QuizMarkLocalRequest request)
     {
         var blocked = await rules.ValidateSecondPeriodAttendanceTakenAsync(TeacherId);
         if (blocked is not null) 
             return StatusCode(403, new { message = blocked });
 
-        // التحقق من أن المادة يدرسها المعلم
-        var subject = await db.TeacherSubjects
-            .Include(t => t.Subject)
-            .FirstOrDefaultAsync(t => t.TeacherId == TeacherId && t.SubjectId == request.SubjectId);
-    
-        if (subject is null) 
-            return BadRequest(new { message = "هذه المادة ليست من موادك" });
+        // ✅ البحث عن المادة باستخدام LocalSubjectId
+        var subject = await db.Subjects
+            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                      s.LocalSubjectId == request.LocalSubjectId);
 
-        // التحقق من وجود الطالب
-        var schoolIds = await GetSchoolIdsAsync();
+        if (subject is null)
+            return BadRequest(new { success = false, message = $"لا توجد مادة برقم {request.LocalSubjectId}" });
+
+        // ✅ التحقق من أن المادة يدرسها المعلم
+        var teacherSubject = await db.TeacherSubjects
+            .FirstOrDefaultAsync(t => t.TeacherId == TeacherId && t.SubjectId == subject.Id);
+    
+        if (teacherSubject is null) 
+            return BadRequest(new { success = false, message = "هذه المادة ليست من موادك" });
+
+        // ✅ البحث عن الطالب باستخدام LocalStudentNumber
         var student = await db.Students
-            .FirstOrDefaultAsync(s => s.Id == request.StudentId && schoolIds.Contains(s.SchoolId));
+            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                      s.LocalStudentNumber == request.LocalStudentNumber);
     
         if (student is null) 
-            return BadRequest(new { message = "الطالب غير موجود في مدارسك" });
+            return BadRequest(new { success = false, message = $"لا يوجد طالب برقم {request.LocalStudentNumber}" });
 
         // التحقق من عدم وجود تكرار
         var existingQuiz = await db.QuizMarks
-            .AnyAsync(q => q.StudentId == request.StudentId && 
-                          q.SubjectId == request.SubjectId && 
+            .AnyAsync(q => q.StudentId == student.Id && 
+                          q.SubjectId == subject.Id && 
                           q.Semester == request.Semester &&
                           q.QuizNumber == request.QuizNumber);
     
         if (existingQuiz)
-            return BadRequest(new { message = "هذه المذاكرة مسجلة بالفعل لهذا الطالب" });
+            return BadRequest(new { success = false, message = "هذه المذاكرة مسجلة بالفعل لهذا الطالب" });
 
         // إنشاء سجل مذاكرة
         var quizMark = new QuizMark
         {
-            StudentId = request.StudentId,
-            SubjectId = request.SubjectId,
+            StudentId = student.Id,
+            SubjectId = subject.Id,
             Semester = request.Semester,
             QuizNumber = request.QuizNumber,
             Score = request.Score,
@@ -275,56 +325,67 @@ public async Task<IActionResult> GetSubjects()
 
         // حساب متوسط علامات المذاكرات
         var quizMarks = await db.QuizMarks
-            .Where(q => q.StudentId == request.StudentId && 
-                       q.SubjectId == request.SubjectId && 
+            .Where(q => q.StudentId == student.Id && 
+                       q.SubjectId == subject.Id && 
                        q.Semester == request.Semester)
             .ToListAsync();
 
         var quizAverage = quizMarks.Any() 
-            ? (double)quizMarks.Average(q => q.Score / q.MaxScore * 100)
+            ? Math.Round(quizMarks.Average(q => (double)q.Score / q.MaxScore * 100), 2)
             : 0;
 
         return Ok(new
         {
+            success = true,
             message = "تم تسجيل علامة المذاكرة بنجاح",
-            quizMark = new
+            data = new
             {
                 quizMark.Id,
-                quizMark.StudentId,
+                StudentLocalNumber = student.LocalStudentNumber,
                 StudentName = student.Name,
-                quizMark.SubjectId,
-                SubjectName = subject.Subject!.Name,
+                LocalSubjectId = subject.LocalSubjectId,
+                SubjectName = subject.Name,
                 quizMark.Semester,
                 quizMark.QuizNumber,
                 quizMark.Score,
                 quizMark.MaxScore,
-                Percentage = (double)(quizMark.Score * 100 / quizMark.MaxScore),
+                Percentage = Math.Round((double)quizMark.Score / quizMark.MaxScore * 100, 2),
                 quizMark.Date,
                 quizMark.Notes,
-                QuizAverage = Math.Round(quizAverage, 2)
+                QuizAverage = quizAverage
             }
         });
     }
 
-    [HttpGet("marks/quiz/{studentId:int}/{subjectId:int}/{semester:int}")]
-    public async Task<IActionResult> GetQuizMarks(int studentId, int subjectId, int semester)
+    [HttpGet("marks/quiz/{localStudentNumber:int}/{localSubjectId:int}/{semester:int}")]
+    public async Task<IActionResult> GetQuizMarks(int localStudentNumber, int localSubjectId, int semester)
     {
-        var schoolIds = await GetSchoolIdsAsync();
+        // ✅ البحث عن الطالب
         var student = await db.Students
-            .FirstOrDefaultAsync(s => s.Id == studentId && schoolIds.Contains(s.SchoolId));
+            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                      s.LocalStudentNumber == localStudentNumber);
         
         if (student is null)
-            return NotFound(new { message = "الطالب غير موجود" });
+            return NotFound(new { success = false, message = $"لا يوجد طالب برقم {localStudentNumber}" });
 
-        var subject = await db.TeacherSubjects
-            .AnyAsync(t => t.TeacherId == TeacherId && t.SubjectId == subjectId);
+        // ✅ البحث عن المادة
+        var subject = await db.Subjects
+            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                      s.LocalSubjectId == localSubjectId);
+
+        if (subject is null)
+            return NotFound(new { success = false, message = $"لا توجد مادة برقم {localSubjectId}" });
+
+        // ✅ التحقق من أن المادة يدرسها المعلم
+        var teacherSubject = await db.TeacherSubjects
+            .AnyAsync(t => t.TeacherId == TeacherId && t.SubjectId == subject.Id);
         
-        if (!subject)
-            return BadRequest(new { message = "هذه المادة ليست من موادك" });
+        if (!teacherSubject)
+            return BadRequest(new { success = false, message = "هذه المادة ليست من موادك" });
 
         var quizMarks = await db.QuizMarks
-            .Where(q => q.StudentId == studentId && 
-                       q.SubjectId == subjectId && 
+            .Where(q => q.StudentId == student.Id && 
+                       q.SubjectId == subject.Id && 
                        q.Semester == semester)
             .OrderBy(q => q.QuizNumber)
             .Select(q => new
@@ -346,48 +407,68 @@ public async Task<IActionResult> GetSubjects()
 
         return Ok(new
         {
-            studentId = studentId,
-            studentName = student.Name,
-            subjectId = subjectId,
-            semester = semester,
-            quizMarks = quizMarks,
-            average = average,
-            totalQuizzes = quizMarks.Count
+            success = true,
+            message = "تم جلب علامات المذاكرات بنجاح",
+            data = new
+            {
+                StudentLocalNumber = localStudentNumber,
+                StudentName = student.Name,
+                LocalSubjectId = localSubjectId,
+                SubjectName = subject.Name,
+                semester = semester,
+                QuizMarks = quizMarks,
+                Average = average,
+                TotalQuizzes = quizMarks.Count
+            }
         });
     }
 
     // ============================================
-    // العلامات (المدمجة) - باستخدام TeacherSubject
+    // العلامات (باستخدام Local IDs)
     // ============================================
 
     [HttpGet("marks")]
     public async Task<IActionResult> GetMarks(
-        [FromQuery] int? subjectId, 
+        [FromQuery] int? localSubjectId, 
         [FromQuery] int? semester,
-        [FromQuery] int? studentId)
+        [FromQuery] int? localStudentNumber)
     {
         var query = db.Marks
             .Include(m => m.Student)
             .Include(m => m.Subject)
             .Where(m => db.TeacherSubjects.Any(t => t.TeacherId == TeacherId && t.SubjectId == m.SubjectId));
 
-        if (subjectId is not null) 
-            query = query.Where(m => m.SubjectId == subjectId);
+        // ✅ فلترة حسب المادة باستخدام LocalSubjectId
+        if (localSubjectId.HasValue)
+        {
+            var subject = await db.Subjects
+                .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                          s.LocalSubjectId == localSubjectId.Value);
+            if (subject is not null)
+                query = query.Where(m => m.SubjectId == subject.Id);
+        }
         
         if (semester is not null) 
             query = query.Where(m => m.Semester == semester);
         
-        if (studentId is not null) 
-            query = query.Where(m => m.StudentId == studentId);
+        // ✅ فلترة حسب الطالب باستخدام LocalStudentNumber
+        if (localStudentNumber is not null)
+        {
+            var student = await db.Students
+                .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                          s.LocalStudentNumber == localStudentNumber.Value);
+            if (student is not null)
+                query = query.Where(m => m.StudentId == student.Id);
+        }
 
         var marks = await query
             .OrderByDescending(m => m.UpdatedAt)
             .Select(m => new
             {
                 m.Id,
-                m.StudentId,
+                StudentLocalNumber = m.Student != null ? m.Student.LocalStudentNumber : 0,
                 StudentName = m.Student != null ? m.Student.Name : null,
-                m.SubjectId,
+                LocalSubjectId = m.Subject != null ? m.Subject.LocalSubjectId : 0,
                 SubjectName = m.Subject != null ? m.Subject.Name : null,
                 m.Semester,
                 m.Oral,
@@ -400,24 +481,30 @@ public async Task<IActionResult> GetSubjects()
             })
             .ToListAsync();
 
-        return Ok(marks);
+        return Ok(new
+        {
+            success = true,
+            message = "تم جلب العلامات بنجاح",
+            data = marks
+        });
     }
 
-    [HttpGet("marks/student/{studentId:int}")]
+    [HttpGet("marks/student/{localStudentNumber:int}")]
     public async Task<IActionResult> GetStudentMarks(
-        int studentId,
+        int localStudentNumber,
         [FromQuery] int? semester)
     {
-        var schoolIds = await GetSchoolIdsAsync();
+        // ✅ البحث عن الطالب
         var student = await db.Students
-            .FirstOrDefaultAsync(s => s.Id == studentId && schoolIds.Contains(s.SchoolId));
+            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                      s.LocalStudentNumber == localStudentNumber);
         
         if (student is null)
-            return NotFound(new { message = "الطالب غير موجود" });
+            return NotFound(new { success = false, message = $"لا يوجد طالب برقم {localStudentNumber}" });
 
         var query = db.Marks
             .Include(m => m.Subject)
-            .Where(m => m.StudentId == studentId && 
+            .Where(m => m.StudentId == student.Id && 
                        db.TeacherSubjects.Any(t => t.TeacherId == TeacherId && t.SubjectId == m.SubjectId));
 
         if (semester is not null) 
@@ -427,7 +514,7 @@ public async Task<IActionResult> GetSubjects()
             .Select(m => new
             {
                 m.Id,
-                m.SubjectId,
+                LocalSubjectId = m.Subject != null ? m.Subject.LocalSubjectId : 0,
                 SubjectName = m.Subject != null ? m.Subject.Name : null,
                 m.Semester,
                 m.Oral,
@@ -445,7 +532,7 @@ public async Task<IActionResult> GetSubjects()
             : 0;
 
         var quizMarks = await db.QuizMarks
-            .Where(q => q.StudentId == studentId && 
+            .Where(q => q.StudentId == student.Id && 
                        db.TeacherSubjects.Any(t => t.TeacherId == TeacherId && t.SubjectId == q.SubjectId))
             .ToListAsync();
 
@@ -455,46 +542,60 @@ public async Task<IActionResult> GetSubjects()
 
         return Ok(new
         {
-            studentId = studentId,
-            studentName = student.Name,
-            semester = semester,
-            marks = marks,
-            average = average,
-            quizAverage = quizAverage,
-            totalQuizzes = quizMarks.Count
+            success = true,
+            message = "تم جلب علامات الطالب بنجاح",
+            data = new
+            {
+                StudentLocalNumber = localStudentNumber,
+                StudentName = student.Name,
+                semester = semester,
+                Marks = marks,
+                Average = average,
+                QuizAverage = quizAverage,
+                TotalQuizzes = quizMarks.Count
+            }
         });
     }
 
     // ============================================
-    // تقارير الأداء
+    // تقارير الأداء (باستخدام Local IDs)
     // ============================================
 
     [HttpPost("performance-reports")]
-    public async Task<IActionResult> CreatePerformanceReport(PerformanceReportRequest request)
+    public async Task<IActionResult> CreatePerformanceReport(PerformanceReportLocalRequest request)
     {
         var blocked = await rules.ValidateSecondPeriodAttendanceTakenAsync(TeacherId);
         if (blocked is not null) 
             return StatusCode(403, new { message = blocked });
 
-        var subject = await db.TeacherSubjects
-            .Include(t => t.Subject)
-            .FirstOrDefaultAsync(t => t.TeacherId == TeacherId && t.SubjectId == request.SubjectId);
-        
-        if (subject is null) 
-            return BadRequest(new { message = "هذه المادة ليست من موادك" });
+        // ✅ البحث عن المادة باستخدام LocalSubjectId
+        var subject = await db.Subjects
+            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                      s.LocalSubjectId == request.LocalSubjectId);
 
-        var schoolIds = await GetSchoolIdsAsync();
+        if (subject is null)
+            return BadRequest(new { success = false, message = $"لا توجد مادة برقم {request.LocalSubjectId}" });
+
+        // ✅ التحقق من أن المادة يدرسها المعلم
+        var teacherSubject = await db.TeacherSubjects
+            .FirstOrDefaultAsync(t => t.TeacherId == TeacherId && t.SubjectId == subject.Id);
+        
+        if (teacherSubject is null) 
+            return BadRequest(new { success = false, message = "هذه المادة ليست من موادك" });
+
+        // ✅ البحث عن الطالب باستخدام LocalStudentNumber
         var student = await db.Students
-            .FirstOrDefaultAsync(s => s.Id == request.StudentId && schoolIds.Contains(s.SchoolId));
+            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                      s.LocalStudentNumber == request.LocalStudentNumber);
         
         if (student is null) 
-            return BadRequest(new { message = "الطالب غير موجود في مدارسك" });
+            return BadRequest(new { success = false, message = $"لا يوجد طالب برقم {request.LocalStudentNumber}" });
 
         var report = new PerformanceReport
         {
-            StudentId = request.StudentId,
+            StudentId = student.Id,
             TeacherId = TeacherId,
-            SubjectId = request.SubjectId,
+            SubjectId = subject.Id,
             Semester = request.Semester,
             Behavior = request.Behavior ?? "",
             Notes = request.Notes ?? "",
@@ -506,36 +607,66 @@ public async Task<IActionResult> GetSubjects()
 
         await notifier.SendAsync(student.Id, UserType.Student,
             "تقرير أداء جديد",
-            $"تم إضافة تقرير أداء لك في مادة {subject.Subject!.Name}",
+            $"تم إضافة تقرير أداء لك في مادة {subject.Name}",
             "performance_report");
 
-        return Created($"api/teacher/performance-reports/{report.Id}", report);
+        return Created($"api/teacher/performance-reports/{report.Id}", new
+        {
+            success = true,
+            message = "تم إضافة تقرير الأداء بنجاح",
+            data = new
+            {
+                report.Id,
+                StudentLocalNumber = student.LocalStudentNumber,
+                StudentName = student.Name,
+                LocalSubjectId = subject.LocalSubjectId,
+                SubjectName = subject.Name,
+                report.Semester,
+                report.Behavior,
+                report.Notes,
+                report.CreatedAt
+            }
+        });
     }
 
     [HttpGet("performance-reports")]
     public async Task<IActionResult> GetPerformanceReports(
-        [FromQuery] int? studentId,
-        [FromQuery] int? subjectId)
+        [FromQuery] int? localStudentNumber,
+        [FromQuery] int? localSubjectId)
     {
         var query = db.PerformanceReports
             .Include(r => r.Student)
             .Include(r => r.Subject)
             .Where(r => r.TeacherId == TeacherId);
 
-        if (studentId is not null) 
-            query = query.Where(r => r.StudentId == studentId);
+        // ✅ فلترة حسب الطالب باستخدام LocalStudentNumber
+        if (localStudentNumber.HasValue)
+        {
+            var student = await db.Students
+                .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                          s.LocalStudentNumber == localStudentNumber.Value);
+            if (student is not null)
+                query = query.Where(r => r.StudentId == student.Id);
+        }
         
-        if (subjectId is not null) 
-            query = query.Where(r => r.SubjectId == subjectId);
+        // ✅ فلترة حسب المادة باستخدام LocalSubjectId
+        if (localSubjectId.HasValue)
+        {
+            var subject = await db.Subjects
+                .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                          s.LocalSubjectId == localSubjectId.Value);
+            if (subject is not null)
+                query = query.Where(r => r.SubjectId == subject.Id);
+        }
 
         var reports = await query
             .OrderByDescending(r => r.CreatedAt)
             .Select(r => new
             {
                 r.Id,
-                r.StudentId,
+                StudentLocalNumber = r.Student != null ? r.Student.LocalStudentNumber : 0,
                 StudentName = r.Student != null ? r.Student.Name : null,
-                r.SubjectId,
+                LocalSubjectId = r.Subject != null ? r.Subject.LocalSubjectId : 0,
                 SubjectName = r.Subject != null ? r.Subject.Name : null,
                 r.Semester,
                 r.Behavior,
@@ -544,11 +675,16 @@ public async Task<IActionResult> GetSubjects()
             })
             .ToListAsync();
 
-        return Ok(reports);
+        return Ok(new
+        {
+            success = true,
+            message = "تم جلب تقارير الأداء بنجاح",
+            data = reports
+        });
     }
 
     // ============================================
-    // الشكاوى
+    // الشكاوى (باستخدام Local IDs)
     // ============================================
 
     [HttpPost("complaints")]
@@ -582,7 +718,19 @@ public async Task<IActionResult> GetSubjects()
                 "complaint");
         }
 
-        return Created($"api/teacher/complaints/{complaint.Id}", complaint);
+        return Created($"api/teacher/complaints/{complaint.Id}", new
+        {
+            success = true,
+            message = "تم إنشاء الشكوى بنجاح",
+            data = new
+            {
+                complaint.Id,
+                complaint.Against,
+                complaint.Content,
+                complaint.Status,
+                complaint.CreatedAt
+            }
+        });
     }
 
     [HttpGet("complaints")]
@@ -602,336 +750,111 @@ public async Task<IActionResult> GetSubjects()
             })
             .ToListAsync();
 
-        return Ok(complaints);
+        return Ok(new
+        {
+            success = true,
+            message = "تم جلب شكواك بنجاح",
+            data = complaints
+        });
     }
 
     // ============================================
-    // الملف الشخصي للمعلم (باستخدام LocalGradeNumber)
+    // الملف الشخصي للمعلم (باستخدام Local IDs)
     // ============================================
 
     [HttpGet("full-profile")]
-public async Task<IActionResult> GetFullProfile()
-{
-    var me = await db.Employees.FindAsync(TeacherId);
-    if (me is null) 
-        return NotFound();
-
-    // ✅ الحصول على المدرسة الأساسية للمعلم من EmployeeSchool
-    var primarySchool = await db.EmployeeSchools
-        .Include(es => es.School)
-        .FirstOrDefaultAsync(es => es.EmployeeId == TeacherId && es.IsActive);
-
-    var primarySchoolId = primarySchool?.SchoolId ?? 0;
-    var primarySchoolName = primarySchool?.School?.Name ?? "غير معروف";
-    var localEmployeeNumber = primarySchool?.LocalEmployeeNumber ?? 0;
-
-    var teacher = new
+    public async Task<IActionResult> GetFullProfile()
     {
-        me.Id,
-        me.Name,
-        me.Email,
-        LocalEmployeeNumber = localEmployeeNumber,  // ✅ Local ID
-        PrimarySchoolId = primarySchoolId,
-        PrimarySchoolName = primarySchoolName,
-        me.Phone,
-        me.Address,
-        me.BirthDate,
-        me.Qualification,
-        me.IsDismissed,
-        me.CreatedAt
-    };
+        var me = await db.Employees.FindAsync(TeacherId);
+        if (me is null) 
+            return NotFound();
 
-    // المدارس التي يعمل بها المعلم
-    var assignments = await db.TeacherAssignments
-        .Where(t => t.EmployeeId == TeacherId)
-        .Join(db.Schools, t => t.SchoolId, s => s.Id, (t, s) => new { SchoolId = s.Id, SchoolName = s.Name })
-        .ToListAsync();
+        var primarySchool = await db.EmployeeSchools
+            .Include(es => es.School)
+            .FirstOrDefaultAsync(es => es.EmployeeId == TeacherId && es.IsActive);
 
-    var schools = new List<object>();
-    foreach (var a in assignments)
-    {
-        // ✅ المواد التي يدرسها في هذه المدرسة (مع Local IDs)
-        var subjects = await db.TeacherSubjects
-            .Where(t => t.TeacherId == TeacherId && t.Subject!.SchoolId == a.SchoolId)
-            .Include(t => t.Subject)
-                .ThenInclude(s => s!.Grade)
-            .Select(t => new
-            {
-                LocalSubjectId = t.Subject != null ? t.Subject.LocalSubjectId : 0,  // ✅ Local ID
-                SubjectName = t.Subject != null ? t.Subject.Name : null,
-                LocalGradeNumber = t.Subject != null && t.Subject.Grade != null ? t.Subject.Grade.LocalGradeNumber : 0,  // ✅ Local ID
-                GradeName = t.Subject != null && t.Subject.Grade != null ? t.Subject.Grade.Name : null
-            })
-            .ToListAsync();
+        var primarySchoolId = primarySchool?.SchoolId ?? 0;
+        var primarySchoolName = primarySchool?.School?.Name ?? "غير معروف";
+        var localEmployeeNumber = primarySchool?.LocalEmployeeNumber ?? 0;
 
-        // ✅ الشعب التي يدرس فيها (مع Local IDs)
-        var sections = await db.TeacherGrades
-            .Where(t => t.TeacherId == TeacherId && t.Section!.SchoolId == a.SchoolId)
-            .Include(t => t.Section)
-                .ThenInclude(s => s!.Grade)
-            .Select(t => new
-            {
-                SectionName = t.Section != null ? t.Section.Name : null,
-                LocalSectionNumber = t.Section != null ? t.Section.LocalSectionNumber : 0,  // ✅ Local ID
-                GradeName = t.Section != null && t.Section.Grade != null ? t.Section.Grade.Name : null,
-                LocalGradeNumber = t.Section != null && t.Section.Grade != null ? t.Section.Grade.LocalGradeNumber : 0  // ✅ Local ID
-            })
-            .Distinct()
-            .ToListAsync();
-
-        // ✅ LocalEmployeeNumber في هذه المدرسة
-        var localEmpNumber = await db.EmployeeSchools
-            .Where(es => es.EmployeeId == TeacherId && es.SchoolId == a.SchoolId && es.IsActive)
-            .Select(es => es.LocalEmployeeNumber)
-            .FirstOrDefaultAsync();
-
-        var school = new
+        var teacher = new
         {
-            a.SchoolId,
-            SchoolName = a.SchoolName,
-            LocalEmployeeNumber = localEmpNumber,  // ✅ Local ID
-            Subjects = subjects,
-            Sections = sections
+            me.Id,
+            me.Name,
+            me.Email,
+            LocalEmployeeNumber = localEmployeeNumber,
+            PrimarySchoolId = primarySchoolId,
+            PrimarySchoolName = primarySchoolName,
+            me.Phone,
+            me.Address,
+            me.BirthDate,
+            me.Qualification,
+            me.IsDismissed,
+            me.CreatedAt
         };
 
-        schools.Add(school);
-    }
-
-    // ✅ العلامات (مع Local IDs)
-    var marks = await db.Marks
-        .Where(m => db.TeacherSubjects.Any(t => t.TeacherId == TeacherId && t.SubjectId == m.SubjectId))
-        .OrderByDescending(m => m.UpdatedAt).Take(500)
-        .Select(m => new
-        {
-            m.Id,
-            m.StudentId,
-            StudentName = m.Student != null ? m.Student.Name : null,
-            LocalStudentNumber = m.Student != null ? m.Student.LocalStudentNumber : 0,  // ✅ Local ID
-            LocalSubjectId = m.Subject != null ? m.Subject.LocalSubjectId : 0,  // ✅ Local ID
-            SubjectName = m.Subject != null ? m.Subject.Name : null,
-            m.Semester,
-            m.Oral,
-            m.Quiz1,
-            m.Quiz2,
-            m.Homework,
-            m.FinalExam,
-            m.Total,
-            m.UpdatedAt
-        })
-        .ToListAsync();
-
-    // ✅ حضور المعلم
-    var attendance = await db.EmployeeAttendances
-        .Where(a => a.EmployeeId == TeacherId)
-        .OrderByDescending(a => a.Date).Take(200)
-        .Select(a => new
-        {
-            a.Date,
-            Status = a.Status.ToString(),
-            a.OnLeave
-        })
-        .ToListAsync();
-
-    // ✅ الإجازات
-    var leaves = await db.Leaves
-        .Where(l => l.EmployeeId == TeacherId)
-        .OrderByDescending(l => l.StartDate)
-        .Select(l => new
-        {
-            l.Id,
-            l.StartDate,
-            l.EndDate,
-            l.Reason
-        })
-        .ToListAsync();
-
-    // ✅ تقارير الأداء (مع Local IDs)
-    var perfReports = await db.PerformanceReports
-        .Where(r => r.TeacherId == TeacherId)
-        .Join(db.Subjects, r => r.SubjectId, s => s.Id, (r, s) => new { r, s })
-        .OrderByDescending(x => x.r.CreatedAt)
-        .Select(x => new
-        {
-            x.r.Id,
-            x.r.StudentId,
-            StudentName = x.r.Student != null ? x.r.Student.Name : null,
-            LocalStudentNumber = x.r.Student != null ? x.r.Student.LocalStudentNumber : 0,  // ✅ Local ID
-            SubjectName = x.s.Name,
-            LocalSubjectId = x.s.LocalSubjectId,  // ✅ Local ID
-            x.r.Semester,
-            x.r.Behavior,
-            x.r.Notes,
-            x.r.CreatedAt
-        })
-        .ToListAsync();
-
-    // ✅ الشكاوى
-    var complaints = await db.Complaints
-        .Where(c => c.FromUserId == TeacherId && c.FromUserType == UserType.Employee)
-        .OrderByDescending(c => c.CreatedAt)
-        .Select(c => new
-        {
-            c.Id,
-            c.Against,
-            c.Content,
-            Status = c.Status.ToString(),
-            c.Resolution,
-            c.CreatedAt
-        })
-        .ToListAsync();
-
-    // ✅ العقوبات
-    var punishments = await db.Punishments
-        .Where(p => p.EmployeeId == TeacherId)
-        .OrderByDescending(p => p.CreatedAt)
-        .Select(p => new
-        {
-            p.Id,
-            p.Reason,
-            Type = p.Type.ToString(),
-            p.CreatedAt
-        })
-        .ToListAsync();
-
-    // ✅ الإشعارات
-    var notifications = await db.Notifications
-        .Where(n => n.UserId == TeacherId && n.UserType == UserType.Employee)
-        .OrderByDescending(n => n.CreatedAt).Take(100)
-        .Select(n => new
-        {
-            n.Id,
-            n.Title,
-            n.Body,
-            n.Type,
-            n.IsRead,
-            n.CreatedAt
-        })
-        .ToListAsync();
-
-    // ✅ الإحصائيات
-    var statistics = new
-    {
-        TotalSchools = schools.Count,
-        TotalSubjects = schools.Sum(s => ((dynamic)s).Subjects.Count),
-        TotalSections = schools.Sum(s => ((dynamic)s).Sections.Count),
-        TotalMarks = marks.Count,
-        TotalAttendance = attendance.Count,
-        TotalLeaves = leaves.Count,
-        TotalPerformanceReports = perfReports.Count,
-        TotalComplaints = complaints.Count,
-        TotalPunishments = punishments.Count,
-        TotalNotifications = notifications.Count
-    };
-
-    return Ok(new
-    {
-        success = true,
-        message = "تم جلب الملف الكامل للمعلم بنجاح",
-        data = new
-        {
-            Teacher = teacher,
-            Statistics = statistics,
-            Schools = schools,
-            Marks = marks,
-            Attendance = attendance,
-            Leaves = leaves,
-            PerformanceReports = perfReports,
-            Complaints = complaints,
-            Punishments = punishments,
-            Notifications = notifications
-        }
-    });
-}
-
-// ============================================
-// إحصائيات المعلم (مع Local IDs)
-// ============================================
-
-[HttpGet("statistics")]
-public async Task<IActionResult> GetStatistics()
-{
-    // ✅ جلب LocalEmployeeNumber
-    var localEmployeeNumber = await db.EmployeeSchools
-        .Where(es => es.EmployeeId == TeacherId && es.IsActive)
-        .Select(es => es.LocalEmployeeNumber)
-        .FirstOrDefaultAsync();
-
-    var subjectsCount = await db.TeacherSubjects
-        .CountAsync(t => t.TeacherId == TeacherId);
-
-    var studentsCount = await db.Marks
-        .Where(m => db.TeacherSubjects.Any(t => t.TeacherId == TeacherId && t.SubjectId == m.SubjectId))
-        .Select(m => m.StudentId)
-        .Distinct()
-        .CountAsync();
-
-    var marksCount = await db.Marks
-        .CountAsync(m => db.TeacherSubjects.Any(t => t.TeacherId == TeacherId && t.SubjectId == m.SubjectId));
-
-    var reportsCount = await db.PerformanceReports
-        .CountAsync(r => r.TeacherId == TeacherId);
-
-    var complaintsCount = await db.Complaints
-        .CountAsync(c => c.FromUserId == TeacherId && c.FromUserType == UserType.Employee);
-
-    // ✅ جلب المواد مع Local IDs
-    var subjects = await db.TeacherSubjects
-        .Where(t => t.TeacherId == TeacherId)
-        .Include(t => t.Subject)
-        .Select(t => new
-        {
-            LocalSubjectId = t.Subject != null ? t.Subject.LocalSubjectId : 0,
-            SubjectName = t.Subject != null ? t.Subject.Name : null
-        })
-        .ToListAsync();
-
-    return Ok(new
-    {
-        success = true,
-        message = "تم جلب إحصائيات المعلم بنجاح",
-        data = new
-        {
-            LocalEmployeeNumber = localEmployeeNumber,  // ✅ Local ID
-            SubjectsCount = subjectsCount,
-            StudentsCount = studentsCount,
-            MarksCount = marksCount,
-            ReportsCount = reportsCount,
-            ComplaintsCount = complaintsCount,
-            Subjects = subjects
-        }
-    });
-}
-
-    // ============================================
-    // تقرير أداء الطالب
-    // ============================================
-
-    [HttpGet("student-performance/{studentId:int}")]
-    public async Task<IActionResult> GetStudentPerformance(int studentId)
-    {
-        var schoolIds = await GetSchoolIdsAsync();
-        var student = await db.Students
-            .Include(s => s.Section)
-            .ThenInclude(sec => sec!.Grade)
-            .FirstOrDefaultAsync(s => s.Id == studentId && schoolIds.Contains(s.SchoolId));
-        
-        if (student is null)
-            return NotFound(new { message = "الطالب غير موجود" });
-
-        // المواد التي يدرسها المعلم للطالب
-        var subjects = await db.TeacherSubjects
-            .Where(t => t.TeacherId == TeacherId)
-            .Include(t => t.Subject)
-            .Select(t => t.SubjectId)
+        var assignments = await db.TeacherAssignments
+            .Where(t => t.EmployeeId == TeacherId)
+            .Join(db.Schools, t => t.SchoolId, s => s.Id, (t, s) => new { SchoolId = s.Id, SchoolName = s.Name })
             .ToListAsync();
 
-        // العلامات
+        var schools = new List<object>();
+        foreach (var a in assignments)
+        {
+            var subjects = await db.TeacherSubjects
+                .Where(t => t.TeacherId == TeacherId && t.Subject!.SchoolId == a.SchoolId)
+                .Include(t => t.Subject)
+                    .ThenInclude(s => s!.Grade)
+                .Select(t => new
+                {
+                    LocalSubjectId = t.Subject != null ? t.Subject.LocalSubjectId : 0,
+                    SubjectName = t.Subject != null ? t.Subject.Name : null,
+                    LocalGradeNumber = t.Subject != null && t.Subject.Grade != null ? t.Subject.Grade.LocalGradeNumber : 0,
+                    GradeName = t.Subject != null && t.Subject.Grade != null ? t.Subject.Grade.Name : null
+                })
+                .ToListAsync();
+
+            var sections = await db.TeacherGrades
+                .Where(t => t.TeacherId == TeacherId && t.Section!.SchoolId == a.SchoolId)
+                .Include(t => t.Section)
+                    .ThenInclude(s => s!.Grade)
+                .Select(t => new
+                {
+                    SectionName = t.Section != null ? t.Section.Name : null,
+                    LocalSectionNumber = t.Section != null ? t.Section.LocalSectionNumber : 0,
+                    GradeName = t.Section != null && t.Section.Grade != null ? t.Section.Grade.Name : null,
+                    LocalGradeNumber = t.Section != null && t.Section.Grade != null ? t.Section.Grade.LocalGradeNumber : 0
+                })
+                .Distinct()
+                .ToListAsync();
+
+            var localEmpNumber = await db.EmployeeSchools
+                .Where(es => es.EmployeeId == TeacherId && es.SchoolId == a.SchoolId && es.IsActive)
+                .Select(es => es.LocalEmployeeNumber)
+                .FirstOrDefaultAsync();
+
+            var school = new
+            {
+                a.SchoolId,
+                SchoolName = a.SchoolName,
+                LocalEmployeeNumber = localEmpNumber,
+                Subjects = subjects,
+                Sections = sections
+            };
+
+            schools.Add(school);
+        }
+
         var marks = await db.Marks
-            .Where(m => m.StudentId == studentId && subjects.Contains(m.SubjectId))
+            .Where(m => db.TeacherSubjects.Any(t => t.TeacherId == TeacherId && t.SubjectId == m.SubjectId))
+            .OrderByDescending(m => m.UpdatedAt).Take(500)
             .Select(m => new
             {
-                m.SubjectId,
-                SubjectName = m.Subject!.Name,
+                m.Id,
+                StudentLocalNumber = m.Student != null ? m.Student.LocalStudentNumber : 0,
+                StudentName = m.Student != null ? m.Student.Name : null,
+                LocalSubjectId = m.Subject != null ? m.Subject.LocalSubjectId : 0,
+                SubjectName = m.Subject != null ? m.Subject.Name : null,
                 m.Semester,
                 m.Oral,
                 m.Quiz1,
@@ -943,13 +866,223 @@ public async Task<IActionResult> GetStatistics()
             })
             .ToListAsync();
 
-        // علامات المذاكرات
+        var attendance = await db.EmployeeAttendances
+            .Where(a => a.EmployeeId == TeacherId)
+            .OrderByDescending(a => a.Date).Take(200)
+            .Select(a => new
+            {
+                a.Date,
+                Status = a.Status.ToString(),
+                a.OnLeave
+            })
+            .ToListAsync();
+
+        var leaves = await db.Leaves
+            .Where(l => l.EmployeeId == TeacherId)
+            .OrderByDescending(l => l.StartDate)
+            .Select(l => new
+            {
+                l.Id,
+                l.StartDate,
+                l.EndDate,
+                l.Reason
+            })
+            .ToListAsync();
+
+        var perfReports = await db.PerformanceReports
+            .Where(r => r.TeacherId == TeacherId)
+            .Join(db.Subjects, r => r.SubjectId, s => s.Id, (r, s) => new { r, s })
+            .OrderByDescending(x => x.r.CreatedAt)
+            .Select(x => new
+            {
+                x.r.Id,
+                StudentLocalNumber = x.r.Student != null ? x.r.Student.LocalStudentNumber : 0,
+                StudentName = x.r.Student != null ? x.r.Student.Name : null,
+                SubjectName = x.s.Name,
+                LocalSubjectId = x.s.LocalSubjectId,
+                x.r.Semester,
+                x.r.Behavior,
+                x.r.Notes,
+                x.r.CreatedAt
+            })
+            .ToListAsync();
+
+        var complaints = await db.Complaints
+            .Where(c => c.FromUserId == TeacherId && c.FromUserType == UserType.Employee)
+            .OrderByDescending(c => c.CreatedAt)
+            .Select(c => new
+            {
+                c.Id,
+                c.Against,
+                c.Content,
+                Status = c.Status.ToString(),
+                c.Resolution,
+                c.CreatedAt
+            })
+            .ToListAsync();
+
+        var punishments = await db.Punishments
+            .Where(p => p.EmployeeId == TeacherId)
+            .OrderByDescending(p => p.CreatedAt)
+            .Select(p => new
+            {
+                p.Id,
+                p.Reason,
+                Type = p.Type.ToString(),
+                p.CreatedAt
+            })
+            .ToListAsync();
+
+        var notifications = await db.Notifications
+            .Where(n => n.UserId == TeacherId && n.UserType == UserType.Employee)
+            .OrderByDescending(n => n.CreatedAt).Take(100)
+            .Select(n => new
+            {
+                n.Id,
+                n.Title,
+                n.Body,
+                n.Type,
+                n.IsRead,
+                n.CreatedAt
+            })
+            .ToListAsync();
+
+        var statistics = new
+        {
+            TotalSchools = schools.Count,
+            TotalSubjects = schools.Sum(s => ((dynamic)s).Subjects.Count),
+            TotalSections = schools.Sum(s => ((dynamic)s).Sections.Count),
+            TotalMarks = marks.Count,
+            TotalAttendance = attendance.Count,
+            TotalLeaves = leaves.Count,
+            TotalPerformanceReports = perfReports.Count,
+            TotalComplaints = complaints.Count,
+            TotalPunishments = punishments.Count,
+            TotalNotifications = notifications.Count
+        };
+
+        return Ok(new
+        {
+            success = true,
+            message = "تم جلب الملف الكامل للمعلم بنجاح",
+            data = new
+            {
+                Teacher = teacher,
+                Statistics = statistics,
+                Schools = schools,
+                Marks = marks,
+                Attendance = attendance,
+                Leaves = leaves,
+                PerformanceReports = perfReports,
+                Complaints = complaints,
+                Punishments = punishments,
+                Notifications = notifications
+            }
+        });
+    }
+
+    // ============================================
+    // إحصائيات المعلم (مع Local IDs)
+    // ============================================
+
+    [HttpGet("statistics")]
+    public async Task<IActionResult> GetStatistics()
+    {
+        var localEmployeeNumber = await db.EmployeeSchools
+            .Where(es => es.EmployeeId == TeacherId && es.IsActive)
+            .Select(es => es.LocalEmployeeNumber)
+            .FirstOrDefaultAsync();
+
+        var subjectsCount = await db.TeacherSubjects
+            .CountAsync(t => t.TeacherId == TeacherId);
+
+        var studentsCount = await db.Marks
+            .Where(m => db.TeacherSubjects.Any(t => t.TeacherId == TeacherId && t.SubjectId == m.SubjectId))
+            .Select(m => m.StudentId)
+            .Distinct()
+            .CountAsync();
+
+        var marksCount = await db.Marks
+            .CountAsync(m => db.TeacherSubjects.Any(t => t.TeacherId == TeacherId && t.SubjectId == m.SubjectId));
+
+        var reportsCount = await db.PerformanceReports
+            .CountAsync(r => r.TeacherId == TeacherId);
+
+        var complaintsCount = await db.Complaints
+            .CountAsync(c => c.FromUserId == TeacherId && c.FromUserType == UserType.Employee);
+
+        var subjects = await db.TeacherSubjects
+            .Where(t => t.TeacherId == TeacherId)
+            .Include(t => t.Subject)
+            .Select(t => new
+            {
+                LocalSubjectId = t.Subject != null ? t.Subject.LocalSubjectId : 0,
+                SubjectName = t.Subject != null ? t.Subject.Name : null
+            })
+            .ToListAsync();
+
+        return Ok(new
+        {
+            success = true,
+            message = "تم جلب إحصائيات المعلم بنجاح",
+            data = new
+            {
+                LocalEmployeeNumber = localEmployeeNumber,
+                SubjectsCount = subjectsCount,
+                StudentsCount = studentsCount,
+                MarksCount = marksCount,
+                ReportsCount = reportsCount,
+                ComplaintsCount = complaintsCount,
+                Subjects = subjects
+            }
+        });
+    }
+
+    // ============================================
+    // تقرير أداء الطالب (باستخدام Local IDs)
+    // ============================================
+
+    [HttpGet("student-performance/{localStudentNumber:int}")]
+    public async Task<IActionResult> GetStudentPerformance(int localStudentNumber)
+    {
+        var student = await db.Students
+            .Include(s => s.Section)
+                .ThenInclude(sec => sec!.Grade)
+            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                      s.LocalStudentNumber == localStudentNumber);
+        
+        if (student is null)
+            return NotFound(new { success = false, message = $"لا يوجد طالب برقم {localStudentNumber}" });
+
+        var subjects = await db.TeacherSubjects
+            .Where(t => t.TeacherId == TeacherId)
+            .Include(t => t.Subject)
+            .Select(t => t.SubjectId)
+            .ToListAsync();
+
+        var marks = await db.Marks
+            .Where(m => m.StudentId == student.Id && subjects.Contains(m.SubjectId))
+            .Select(m => new
+            {
+                LocalSubjectId = m.Subject != null ? m.Subject.LocalSubjectId : 0,
+                SubjectName = m.Subject != null ? m.Subject.Name : null,
+                m.Semester,
+                m.Oral,
+                m.Quiz1,
+                m.Quiz2,
+                m.Homework,
+                m.FinalExam,
+                m.Total,
+                m.UpdatedAt
+            })
+            .ToListAsync();
+
         var quizMarks = await db.QuizMarks
-            .Where(q => q.StudentId == studentId && subjects.Contains(q.SubjectId))
+            .Where(q => q.StudentId == student.Id && subjects.Contains(q.SubjectId))
             .Select(q => new
             {
-                q.SubjectId,
-                SubjectName = q.Subject!.Name,
+                LocalSubjectId = q.Subject != null ? q.Subject.LocalSubjectId : 0,
+                SubjectName = q.Subject != null ? q.Subject.Name : null,
                 q.QuizNumber,
                 q.Score,
                 q.MaxScore,
@@ -959,13 +1092,12 @@ public async Task<IActionResult> GetStatistics()
             })
             .ToListAsync();
 
-        // تقارير الأداء
         var reports = await db.PerformanceReports
-            .Where(r => r.StudentId == studentId && r.TeacherId == TeacherId)
+            .Where(r => r.StudentId == student.Id && r.TeacherId == TeacherId)
             .Select(r => new
             {
-                r.SubjectId,
-                SubjectName = r.Subject!.Name,
+                LocalSubjectId = r.Subject != null ? r.Subject.LocalSubjectId : 0,
+                SubjectName = r.Subject != null ? r.Subject.Name : null,
                 r.Semester,
                 r.Behavior,
                 r.Notes,
@@ -973,9 +1105,8 @@ public async Task<IActionResult> GetStatistics()
             })
             .ToListAsync();
 
-        // الحضور
         var attendance = await db.StudentAttendances
-            .Where(a => a.StudentId == studentId)
+            .Where(a => a.StudentId == student.Id)
             .OrderByDescending(a => a.Date)
             .Take(50)
             .Select(a => new
@@ -992,129 +1123,129 @@ public async Task<IActionResult> GetStatistics()
             ? Math.Round((double)presentCount / totalAttendance * 100, 2) 
             : 0;
 
-        // حساب المعدل العام
         var average = marks.Any() 
             ? Math.Round(marks.Average(m => m.Total), 2) 
             : 0;
 
         return Ok(new
         {
-            student = new
+            success = true,
+            message = "تم جلب أداء الطالب بنجاح",
+            data = new
             {
-                student.Id,
-                student.Name,
-                student.Email,
-                SectionName = student.Section?.Name,
-                GradeName = student.Section?.Grade?.Name,
-                LocalGradeNumber = student.Section?.Grade?.LocalGradeNumber
-            },
-            statistics = new
-            {
-                totalSubjects = subjects.Count,
-                totalMarks = marks.Count,
-                totalQuizMarks = quizMarks.Count,
-                totalReports = reports.Count,
-                average = average
-            },
-            attendance = new
-            {
-                total = totalAttendance,
-                present = presentCount,
-                absent = absentCount,
-                percentage = attendancePercentage
-            },
-            marks = marks,
-            quizMarks = quizMarks,
-            reports = reports
+                student = new
+                {
+                    student.Id,
+                    student.Name,
+                    student.Email,
+                    student.LocalStudentNumber,
+                    SectionName = student.Section?.Name,
+                    LocalSectionNumber = student.Section?.LocalSectionNumber ?? 0,
+                    GradeName = student.Section?.Grade?.Name,
+                    LocalGradeNumber = student.Section?.Grade?.LocalGradeNumber ?? 0
+                },
+                statistics = new
+                {
+                    totalSubjects = subjects.Count,
+                    totalMarks = marks.Count,
+                    totalQuizMarks = quizMarks.Count,
+                    totalReports = reports.Count,
+                    average = average
+                },
+                attendance = new
+                {
+                    total = totalAttendance,
+                    present = presentCount,
+                    absent = absentCount,
+                    percentage = attendancePercentage
+                },
+                marks = marks,
+                quizMarks = quizMarks,
+                reports = reports
+            }
         });
     }
+
     // ============================================
-// Feed - الإعلانات والأنشطة مع Local IDs
-// ============================================
+    // Feed - الإعلانات والأنشطة مع Local IDs
+    // ============================================
 
-[HttpGet("feed")]
-public async Task<IActionResult> GetFeed()
-{
-    var now = DateTime.UtcNow;
-    
-    // ✅ الإعلانات مع Local IDs
-    var announcements = await db.Announcements
-        .Where(a => a.SchoolId == SchoolId && 
-                   a.IsActive &&
-                   (a.Audience == AnnouncementAudience.All || 
-                    a.Audience == AnnouncementAudience.Students) &&
-                   (a.ExpiryDate == null || a.ExpiryDate > now))
-        .OrderByDescending(a => a.CreatedAt)
-        .Select(a => new
-        {
-            a.Id,
-            LocalAnnouncementId = a.LocalAnnouncementId,  // ✅ Local ID للإعلان
-            a.Title,
-            Description = a.Body,
-            Date = a.CreatedAt.ToString("yyyy-MM-dd"),
-            a.ExpiryDate,
-            Type = "announcement"
-        })
-        .ToListAsync();
-
-    // ✅ الأنشطة مع Local IDs
-    var activities = await db.Activities
-        .Where(a => a.SchoolId == SchoolId)
-        .OrderByDescending(a => a.CreatedAt)
-        .Select(a => new
-        {
-            a.Id,
-            LocalActivityId = a.LocalActivityId,  // ✅ Local ID للنشاط
-            Title = a.Name,
-            Description = a.Description ?? a.Schedule ?? "",
-            Date = a.CreatedAt.ToString("yyyy-MM-dd"),
-            ExpiryDate = (DateTime?)null,
-            Type = "activity"
-        })
-        .ToListAsync();
-
-    // ✅ دمج الإعلانات والأنشطة في قائمة واحدة
-    var allItems = new List<object>();
-    allItems.AddRange(announcements);
-    allItems.AddRange(activities);
-
-    // ✅ ترتيب حسب التاريخ (الأحدث أولاً)
-    var sortedFeed = allItems
-        .OrderByDescending(x => DateTime.Parse(((dynamic)x).Date))
-        .ToList();
-
-    return Ok(new
+    [HttpGet("feed")]
+    public async Task<IActionResult> GetFeed()
     {
-        success = true,
-        message = "تم جلب البيانات بنجاح",
-        data = new
+        var now = DateTime.UtcNow;
+        
+        var announcements = await db.Announcements
+            .Where(a => a.SchoolId == SchoolId && 
+                       a.IsActive &&
+                       (a.Audience == AnnouncementAudience.All || 
+                        a.Audience == AnnouncementAudience.Students ||
+                        a.Audience == AnnouncementAudience.Teachers) &&
+                       (a.ExpiryDate == null || a.ExpiryDate > now))
+            .OrderByDescending(a => a.CreatedAt)
+            .Select(a => new
+            {
+                a.Id,
+                LocalId = a.LocalAnnouncementId,
+                a.Title,
+                Description = a.Body,
+                Date = a.CreatedAt.ToString("yyyy-MM-dd"),
+                a.ExpiryDate,
+                Type = "announcement"
+            })
+            .ToListAsync();
+
+        var activities = await db.Activities
+            .Where(a => a.SchoolId == SchoolId)
+            .OrderByDescending(a => a.CreatedAt)
+            .Select(a => new
+            {
+                a.Id,
+                LocalId = a.LocalActivityId,
+                Title = a.Name,
+                Description = a.Description ?? a.Schedule ?? "",
+                Date = a.CreatedAt.ToString("yyyy-MM-dd"),
+                ExpiryDate = (DateTime?)null,
+                Type = "activity"
+            })
+            .ToListAsync();
+
+        var allItems = new List<object>();
+        allItems.AddRange(announcements);
+        allItems.AddRange(activities);
+
+        var sortedFeed = allItems
+            .OrderByDescending(x => DateTime.Parse(((dynamic)x).Date))
+            .ToList();
+
+        return Ok(new
         {
-            announcements = announcements,  // ← مع Local IDs
-            activities = activities,        // ← مع Local IDs
-            feed = sortedFeed               // ← مع Local IDs
-        }
-    });
-}
+            success = true,
+            message = "تم جلب البيانات بنجاح",
+            data = new
+            {
+                announcements = announcements,
+                activities = activities,
+                feed = sortedFeed
+            }
+        });
+    }
 
     // ============================================
-    // الطلاب المعرضين للخطر
+    // الطلاب المعرضين للخطر (باستخدام Local IDs)
     // ============================================
 
     [HttpGet("at-risk-students")]
     public async Task<IActionResult> GetAtRiskStudents([FromQuery] decimal threshold = 50)
     {
-        var schoolIds = await GetSchoolIdsAsync();
-        
-        // جلب جميع الطلاب في مدارس المعلم
         var students = await db.Students
-            .Where(s => schoolIds.Contains(s.SchoolId) && s.IsActive)
+            .Where(s => s.SchoolId == SchoolId && s.IsActive)
             .ToListAsync();
 
         var atRiskStudents = new List<object>();
 
         foreach (var student in students)
         {
-            // جلب مواد المعلم لهذا الطالب
             var subjectIds = await db.TeacherSubjects
                 .Where(t => t.TeacherId == TeacherId)
                 .Select(t => t.SubjectId)
@@ -1130,7 +1261,6 @@ public async Task<IActionResult> GetFeed()
                 
                 if (average < threshold)
                 {
-                    // جلب آخر تقرير أداء
                     var lastReport = await db.PerformanceReports
                         .Where(r => r.StudentId == student.Id && r.TeacherId == TeacherId)
                         .OrderByDescending(r => r.CreatedAt)
@@ -1142,6 +1272,7 @@ public async Task<IActionResult> GetFeed()
                         student.Id,
                         student.Name,
                         student.Email,
+                        student.LocalStudentNumber,
                         student.GuardianName,
                         student.GuardianPhone,
                         Average = Math.Round(average, 2),
@@ -1155,19 +1286,14 @@ public async Task<IActionResult> GetFeed()
 
         return Ok(new
         {
-            threshold = threshold,
-            totalAtRisk = atRiskStudents.Count,
-            students = atRiskStudents.OrderBy(s => ((dynamic)s).Average).ToList()
+            success = true,
+            message = "تم جلب الطلاب المعرضين للخطر بنجاح",
+            data = new
+            {
+                Threshold = threshold,
+                TotalAtRisk = atRiskStudents.Count,
+                Students = atRiskStudents.OrderBy(s => ((dynamic)s).Average).ToList()
+            }
         });
     }
-
-    // ============================================
-    // دوال مساعدة
-    // ============================================
-
-    private async Task<List<int>> GetSchoolIdsAsync() =>
-        await db.TeacherAssignments
-            .Where(t => t.EmployeeId == TeacherId)
-            .Select(t => t.SchoolId)
-            .ToListAsync();
 }

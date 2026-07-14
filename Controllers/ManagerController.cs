@@ -1278,9 +1278,48 @@ public async Task<IActionResult> GetSectionTeachers(int localSectionNumber)
             }
         });
     }
+    // ============================================
+// دوال مساعدة
+// ============================================
+
+private static string GetRoleName(EmployeeRole role)
+{
+    return role switch
+    {
+        EmployeeRole.Principal => "مدير المدرسة",
+        EmployeeRole.Secretary => "أمين سر",
+        EmployeeRole.Counselor => "موجه",
+        EmployeeRole.Librarian => "أمين مكتبة",
+        EmployeeRole.ActivitySupervisor => "مشرف نشاطات",
+        EmployeeRole.Teacher => "معلم",
+        _ => role.ToString()
+    };
+}
+
+private bool IsUniqueRole(EmployeeRole role)
+{
+    return role == EmployeeRole.Principal ||
+           role == EmployeeRole.Secretary ||
+           role == EmployeeRole.Librarian ||
+           role == EmployeeRole.ActivitySupervisor;
+}
+
+private static string GetSchoolTypeName(SchoolType type)
+{
+    return type switch
+    {
+        SchoolType.Primary => "ابتدائي",
+        SchoolType.Preparatory => "إعدادي",
+        SchoolType.Secondary => "ثانوي",
+        SchoolType.PrimaryPreparatory => "ابتدائي وإعدادي",
+        SchoolType.PreparatorySecondary => "إعدادي وثانوي",
+        SchoolType.AllStages => "جميع المراحل",
+        _ => type.ToString()
+    };
+}
 
     [HttpPut("students/{localStudentNumber:int}")]
-    public async Task<IActionResult> UpdateStudent(int localStudentNumber, StudentUpdateRequest request)
+    public async Task<IActionResult> UpdateStudent(int localStudentNumber, StudentUpdateRequesting request)
     {
         var student = await db.Students
             .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
@@ -1427,7 +1466,7 @@ public async Task<IActionResult> DeleteStudent(int localStudentNumber)
 
         db.LibraryMembers.Remove(libraryMember);
     }
-
+    
     // ✅ حذف الطالب
     db.Students.Remove(student);
     await db.SaveChangesAsync();
@@ -1865,424 +1904,462 @@ public async Task<IActionResult> DeleteStudent(int localStudentNumber)
     // ============================================
 
     [HttpGet("reports/overview")]
-    public async Task<IActionResult> Overview()
+public async Task<IActionResult> Overview()
+{
+    var today = DateOnly.FromDateTime(DateTime.Today);
+
+    var employeesCount = await db.EmployeeSchools
+        .CountAsync(es => es.SchoolId == SchoolId && es.IsActive);
+
+    var employeesWithDismissalWarning = await db.EmployeeSchools
+        .Where(es => es.SchoolId == SchoolId && es.IsActive)
+        .Join(db.Employees,
+            es => es.EmployeeId,
+            e => e.Id,
+            (es, e) => e)
+        .CountAsync(e => e.DismissalWarning && !e.IsDismissed);
+
+    return Ok(new
     {
-        var today = DateOnly.FromDateTime(DateTime.Today);
-
-        var employeesCount = await db.EmployeeSchools
-            .CountAsync(es => es.SchoolId == SchoolId && es.IsActive);
-
-        var employeesWithDismissalWarning = await db.EmployeeSchools
-            .Where(es => es.SchoolId == SchoolId && es.IsActive)
-            .Join(db.Employees,
-                es => es.EmployeeId,
-                e => e.Id,
-                (es, e) => e)
-            .CountAsync(e => e.DismissalWarning && !e.IsDismissed);
-
-        return Ok(new
+        statistics = new
         {
-            students = await db.Students.CountAsync(s => s.SchoolId == SchoolId),
-            employees = employeesCount,
-            sections = await db.Sections.CountAsync(s => s.SchoolId == SchoolId),
-            subjects = await db.Subjects.CountAsync(s => s.SchoolId == SchoolId),
-            studentsWithDismissalWarning = await db.Students.CountAsync(s => s.SchoolId == SchoolId && s.DismissalWarning),
-            employeesWithDismissalWarning = employeesWithDismissalWarning,
-            openComplaints = await db.Complaints.CountAsync(c => c.SchoolId == SchoolId && c.Status == ComplaintStatus.Open),
-            absentStudentsToday = await db.StudentAttendances.CountAsync(a =>
+            Students = await db.Students.CountAsync(s => s.SchoolId == SchoolId),
+            Employees = employeesCount,
+            Sections = await db.Sections.CountAsync(s => s.SchoolId == SchoolId),
+            Subjects = await db.Subjects.CountAsync(s => s.SchoolId == SchoolId),
+            StudentsWithDismissalWarning = await db.Students.CountAsync(s => s.SchoolId == SchoolId && s.DismissalWarning),
+            EmployeesWithDismissalWarning = employeesWithDismissalWarning,
+            OpenComplaints = await db.Complaints.CountAsync(c => c.SchoolId == SchoolId && c.Status == ComplaintStatus.Open),
+            AbsentStudentsToday = await db.StudentAttendances.CountAsync(a =>
                 a.Date == today && a.Status == AttendanceStatus.Absent &&
                 db.Students.Any(s => s.Id == a.StudentId && s.SchoolId == SchoolId)),
-        });
-    }
-
-    [HttpGet("reports/student-absence")]
-    public async Task<IActionResult> StudentAbsenceReport()
-    {
-        var report = await db.StudentAttendances
-            .Where(a => db.Students.Any(s => s.Id == a.StudentId && s.SchoolId == SchoolId))
-            .GroupBy(a => a.StudentId)
-            .Select(g => new
-            {
-                StudentId = g.Key,
-                LocalStudentNumber = db.Students
-                    .Where(s => s.Id == g.Key)
-                    .Select(s => s.LocalStudentNumber)
-                    .FirstOrDefault(),
-                Total = g.Count(),
-                Unexcused = g.Count(a => a.Status == AttendanceStatus.Absent),
-                Justified = g.Count(a => a.Status == AttendanceStatus.Justified),
-            })
-            .ToListAsync();
-
-        return Ok(report);
-    }
-
-    [HttpGet("reports/health-records")]
-    public async Task<IActionResult> HealthRecords()
-    {
-        var records = await db.Students
-            .Where(s => s.SchoolId == SchoolId)
-            .Select(s => new
-            {
-                s.Id,
-                s.LocalStudentNumber,
-                s.Name,
-                s.BloodType,
-                s.ChronicDiseases,
-                s.Allergies,
-                s.HealthNotes
-            })
-            .ToListAsync();
-
-        return Ok(records);
-    }
-
-    // ============================================
-    // إعدادات العلامات
-    // ============================================
-
-    [HttpPut("mark-config")]
-    public async Task<IActionResult> UpdateMarkConfig(MarkConfigRequest request)
-    {
-        var config = await db.MarkConfigs.FirstOrDefaultAsync(c => c.SchoolId == SchoolId);
-        if (config is null)
-        {
-            config = new MarkConfig { SchoolId = SchoolId };
-            db.MarkConfigs.Add(config);
         }
-        config.MaxOral = request.MaxOral;
-        config.MaxQuiz1 = request.MaxQuiz1;
-        config.MaxQuiz2 = request.MaxQuiz2;
-        config.MaxHomework = request.MaxHomework;
-        config.MaxFinalExam = request.MaxFinalExam;
-        config.PassPercent = request.PassPercent;
-        await db.SaveChangesAsync();
-        return Ok(config);
-    }
+    });
+}
 
-    [HttpGet("mark-config")]
-    public async Task<IActionResult> GetMarkConfig()
+[HttpGet("reports/student-absence")]
+public async Task<IActionResult> StudentAbsenceReport()
+{
+    var report = await db.StudentAttendances
+        .Where(a => db.Students.Any(s => s.Id == a.StudentId && s.SchoolId == SchoolId))
+        .GroupBy(a => a.StudentId)
+        .Select(g => new
+        {
+            StudentId = g.Key,
+            StudentLocalNumber = db.Students  // ✅ Local ID
+                .Where(s => s.Id == g.Key)
+                .Select(s => s.LocalStudentNumber)
+                .FirstOrDefault(),
+            StudentName = db.Students  // ✅ إضافة اسم الطالب
+                .Where(s => s.Id == g.Key)
+                .Select(s => s.Name)
+                .FirstOrDefault(),
+            Total = g.Count(),
+            Present = g.Count(a => a.Status == AttendanceStatus.Present),
+            Absent = g.Count(a => a.Status == AttendanceStatus.Absent),
+            Justified = g.Count(a => a.Status == AttendanceStatus.Justified),
+            AttendanceRate = g.Count() > 0 ? 
+                (decimal)g.Count(a => a.Status == AttendanceStatus.Present) / g.Count() * 100 : 0
+        })
+        .OrderByDescending(r => r.Absent)
+        .ToListAsync();
+
+    return Ok(new
     {
-        var config = await db.MarkConfigs.FirstOrDefaultAsync(c => c.SchoolId == SchoolId) 
-                     ?? new MarkConfig { SchoolId = SchoolId };
-        return Ok(config);
-    }
+        success = true,
+        message = "تم جلب تقرير غياب الطلاب بنجاح",
+        data = report
+    });
+}
 
-    // ============================================
-    // Feed - الإعلانات والأنشطة مع Local IDs
-    // ============================================
+[HttpGet("reports/health-records")]
+public async Task<IActionResult> HealthRecords()
+{
+    var records = await db.Students
+        .Where(s => s.SchoolId == SchoolId)
+        .Select(s => new
+        {
+            s.Id,
+            StudentLocalNumber = s.LocalStudentNumber,  // ✅ Local ID
+            s.Name,
+            s.BloodType,
+            s.ChronicDiseases,
+            s.Allergies,
+            s.HealthNotes,
+            GuardianPhone = s.GuardianPhone,
+            SectionName = s.Section != null ? s.Section.Name : null,
+            LocalSectionNumber = s.Section != null ? s.Section.LocalSectionNumber : 0,  // ✅ Local ID
+            GradeName = s.Section != null && s.Section.Grade != null ? s.Section.Grade.Name : null,
+            LocalGradeNumber = s.Section != null && s.Section.Grade != null ? s.Section.Grade.LocalGradeNumber : 0  // ✅ Local ID
+        })
+        .ToListAsync();
 
-    [HttpGet("feed")]
-    public async Task<IActionResult> GetFeed()
+    return Ok(new
     {
-        var now = DateTime.UtcNow;
-        
-        var announcements = await db.Announcements
-            .Where(a => a.SchoolId == SchoolId && 
-                       a.IsActive &&
-                       (a.Audience == AnnouncementAudience.All || 
-                        a.Audience == AnnouncementAudience.Students) &&
-                       (a.ExpiryDate == null || a.ExpiryDate > now))
-            .OrderByDescending(a => a.CreatedAt)
-            .Select(a => new
+        success = true,
+        message = "تم جلب السجلات الصحية للطلاب بنجاح",
+        data = records
+    });
+}
+
+// ============================================
+// إعدادات العلامات
+// ============================================
+
+[HttpPut("mark-config")]
+public async Task<IActionResult> UpdateMarkConfig(MarkConfigRequest request)
+{
+    var config = await db.MarkConfigs.FirstOrDefaultAsync(c => c.SchoolId == SchoolId);
+    if (config is null)
+    {
+        config = new MarkConfig { SchoolId = SchoolId };
+        db.MarkConfigs.Add(config);
+    }
+    config.MaxOral = request.MaxOral;
+    config.MaxQuiz1 = request.MaxQuiz1;
+    config.MaxQuiz2 = request.MaxQuiz2;
+    config.MaxHomework = request.MaxHomework;
+    config.MaxFinalExam = request.MaxFinalExam;
+    config.PassPercent = request.PassPercent;
+    await db.SaveChangesAsync();
+    
+    return Ok(new
+    {
+        success = true,
+        message = "تم تحديث إعدادات العلامات بنجاح",
+        data = config
+    });
+}
+
+[HttpGet("mark-config")]
+public async Task<IActionResult> GetMarkConfig()
+{
+    var config = await db.MarkConfigs.FirstOrDefaultAsync(c => c.SchoolId == SchoolId) 
+                 ?? new MarkConfig { SchoolId = SchoolId };
+    
+    return Ok(new
+    {
+        success = true,
+        message = "تم جلب إعدادات العلامات بنجاح",
+        data = config
+    });
+}
+
+// ============================================
+// Feed - الإعلانات والأنشطة مع Local IDs
+// ============================================
+
+[HttpGet("feed")]
+public async Task<IActionResult> GetFeed()
+{
+    var now = DateTime.UtcNow;
+    
+    var announcements = await db.Announcements
+        .Where(a => a.SchoolId == SchoolId && 
+                   a.IsActive &&
+                   (a.Audience == AnnouncementAudience.All || 
+                    a.Audience == AnnouncementAudience.Students) &&
+                   (a.ExpiryDate == null || a.ExpiryDate > now))
+        .OrderByDescending(a => a.CreatedAt)
+        .Select(a => new
+        {
+            a.Id,
+            LocalId = a.LocalAnnouncementId,  // ✅ Local ID
+            a.Title,
+            Description = a.Body,
+            Date = a.CreatedAt.ToString("yyyy-MM-dd"),
+            a.ExpiryDate,
+            Type = "announcement"
+        })
+        .ToListAsync();
+
+    var activities = await db.Activities
+        .Where(a => a.SchoolId == SchoolId)
+        .OrderByDescending(a => a.CreatedAt)
+        .Select(a => new
+        {
+            a.Id,
+            LocalId = a.LocalActivityId,  // ✅ Local ID
+            Title = a.Name,
+            Description = a.Description ?? a.Schedule ?? "",
+            Date = a.CreatedAt.ToString("yyyy-MM-dd"),
+            ExpiryDate = (DateTime?)null,
+            Type = "activity"
+        })
+        .ToListAsync();
+
+    var allItems = new List<object>();
+    allItems.AddRange(announcements);
+    allItems.AddRange(activities);
+
+    var sortedFeed = allItems
+        .OrderByDescending(x => DateTime.Parse(((dynamic)x).Date))
+        .ToList();
+
+    return Ok(new
+    {
+        success = true,
+        message = "تم جلب البيانات بنجاح",
+        data = new
+        {
+            announcements = announcements,
+            activities = activities,
+            feed = sortedFeed
+        }
+    });
+}
+
+// ============================================
+// الملف الكامل للموجه - باستخدام Local IDs
+// ============================================
+
+[HttpGet("counselors/{localEmployeeNumber:int}/full-profile")]
+public async Task<IActionResult> GetCounselorFullProfile(int localEmployeeNumber)
+{
+    var counselorSchool = await db.EmployeeSchools
+        .Include(es => es.Employee)
+        .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
+                                   es.LocalEmployeeNumber == localEmployeeNumber &&
+                                   es.Role == EmployeeRole.Counselor &&
+                                   es.IsActive);
+
+    if (counselorSchool is null)
+        return NotFound(new { message = $"لا يوجد موجه برقم {localEmployeeNumber} في هذه المدرسة" });
+
+    var counselor = counselorSchool.Employee;
+    if (counselor is null)
+        return NotFound(new { message = "الموجه غير موجود" });
+
+    var counselorInfo = new
+    {
+        counselor.Id,
+        counselor.Name,
+        counselor.Email,
+        counselor.Phone,
+        counselor.CreatedAt,
+        LocalEmployeeNumber = counselorSchool.LocalEmployeeNumber  // ✅ Local ID
+    };
+
+    var sections = await db.Sections
+        .Include(s => s.Grade)
+        .Where(s => s.CounselorId == counselor.Id)
+        .Select(s => new
+        {
+            s.Id,
+            s.Name,
+            LocalSectionNumber = s.LocalSectionNumber,  // ✅ Local ID
+            GradeName = s.Grade != null ? s.Grade.Name : null,
+            LocalGradeNumber = s.Grade != null ? s.Grade.LocalGradeNumber : 0,  // ✅ Local ID
+            StudentsCount = db.Students.Count(x => x.SectionId == s.Id)
+        })
+        .ToListAsync();
+
+    var warnings = await db.Warnings
+        .Include(w => w.Student)
+        .Where(w => db.Students.Any(s => s.Id == w.StudentId && s.SectionId != null &&
+            db.Sections.Any(x => x.Id == s.SectionId && x.CounselorId == counselor.Id)))
+        .OrderByDescending(w => w.CreatedAt).Take(100)
+        .Select(w => new
+        {
+            w.Id,
+            w.StudentId,
+            StudentName = w.Student != null ? w.Student.Name : null,
+            StudentLocalNumber = w.Student != null ? w.Student.LocalStudentNumber : 0,  // ✅ Local ID
+            w.Type,
+            w.Reason,
+            w.CreatedAt
+        })
+        .ToListAsync();
+
+    var summons = await db.GuardianSummons
+        .Include(s => s.Student)
+        .Where(s => db.Students.Any(st => st.Id == s.StudentId && st.SectionId != null &&
+            db.Sections.Any(x => x.Id == st.SectionId && x.CounselorId == counselor.Id)))
+        .OrderByDescending(s => s.CreatedAt).Take(100)
+        .Select(s => new
+        {
+            s.Id,
+            s.StudentId,
+            StudentName = s.Student != null ? s.Student.Name : null,
+            StudentLocalNumber = s.Student != null ? s.Student.LocalStudentNumber : 0,  // ✅ Local ID
+            s.Reason,
+            s.Date,
+            s.CreatedAt
+        })
+        .ToListAsync();
+
+    var recentAttendance = await db.StudentAttendances
+        .Include(a => a.Student)
+        .Where(a => db.Students.Any(s => s.Id == a.StudentId && s.SectionId != null &&
+            db.Sections.Any(x => x.Id == s.SectionId && x.CounselorId == counselor.Id)))
+        .OrderByDescending(a => a.Date).Take(100)
+        .Select(a => new
+        {
+            a.StudentId,
+            StudentName = a.Student != null ? a.Student.Name : null,
+            StudentLocalNumber = a.Student != null ? a.Student.LocalStudentNumber : 0,  // ✅ Local ID
+            a.Date,
+            a.Status
+        })
+        .ToListAsync();
+
+    var totalStudents = await db.Students
+        .CountAsync(s => s.SectionId != null &&
+            db.Sections.Any(x => x.Id == s.SectionId && x.CounselorId == counselor.Id));
+
+    var totalWarnings = warnings.Count;
+    var totalSummons = summons.Count;
+
+    return Ok(new
+    {
+        success = true,
+        message = "تم جلب الملف الكامل للموجه بنجاح",
+        data = new
+        {
+            Counselor = counselorInfo,
+            Statistics = new
             {
-                a.Id,
-                LocalAnnouncementId = a.LocalAnnouncementId,
-                a.Title,
-                Description = a.Body,
-                Date = a.CreatedAt.ToString("yyyy-MM-dd"),
-                a.ExpiryDate,
-                Type = "announcement"
-            })
-            .ToListAsync();
+                TotalSections = sections.Count,
+                TotalStudents = totalStudents,
+                TotalWarnings = totalWarnings,
+                TotalSummons = totalSummons
+            },
+            Sections = sections,
+            Warnings = warnings,
+            Summons = summons,
+            RecentAttendance = recentAttendance
+        }
+    });
+}
 
-        var activities = await db.Activities
-            .Where(a => a.SchoolId == SchoolId)
-            .OrderByDescending(a => a.CreatedAt)
-            .Select(a => new
-            {
-                a.Id,
-                LocalActivityId = a.LocalActivityId,
-                Title = a.Name,
-                Description = a.Description ?? a.Schedule ?? "",
-                Date = a.CreatedAt.ToString("yyyy-MM-dd"),
-                ExpiryDate = (DateTime?)null,
-                Type = "activity"
-            })
-            .ToListAsync();
+// ============================================
+// ترقية الطلاب (Promotion)
+// ============================================
 
-        var allItems = new List<object>();
-        allItems.AddRange(announcements);
-        allItems.AddRange(activities);
+[HttpPost("promote-students")]
+public async Task<IActionResult> PromoteStudents(PromoteRequest request)
+{
+    try
+    {
+        if (request.Semester != 2)
+        {
+            return BadRequest(new { success = false, message = "لا يمكن الترقية إلا في نهاية الفصل الدراسي الثاني" });
+        }
 
-        var sortedFeed = allItems
-            .OrderByDescending(x => DateTime.Parse(((dynamic)x).Date))
-            .ToList();
+        var result = await promotionService.PromoteStudentsAsync(
+            SchoolId,
+            request.CurrentGradeNumber,
+            request.CurrentAcademicYear,
+            request.NextAcademicYear,
+            request.Semester);
 
         return Ok(new
         {
             success = true,
-            message = "تم جلب البيانات بنجاح",
-            data = new
-            {
-                announcements = announcements,
-                activities = activities,
-                feed = sortedFeed
-            }
+            message = "تمت ترقية الطلاب بنجاح",
+            data = result
+        });
+    }
+    catch (Exception ex)
+    {
+        return BadRequest(new { success = false, message = ex.Message });
+    }
+}
+
+[HttpGet("promotion-report")]
+public async Task<IActionResult> GetPromotionReport(
+    [FromQuery] int localGradeNumber,
+    [FromQuery] int academicYear,
+    [FromQuery] int semester = 2)
+{
+    var grade = await db.Grades
+        .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                  g.LocalGradeNumber == localGradeNumber &&
+                                  g.AcademicYear == academicYear);
+
+    if (grade is null)
+        return NotFound(new { success = false, message = "الصف غير موجود" });
+
+    var students = await db.Students
+        .Include(s => s.Section)
+        .ThenInclude(s => s!.Grade)
+        .Where(s => s.SchoolId == SchoolId && 
+                    s.Section != null &&
+                    s.Section.GradeId == grade.Id &&
+                    s.IsActive)
+        .ToListAsync();
+
+    var studentResults = new List<PromotionReportStudentDto>();
+    foreach (var student in students)
+    {
+        var finalAverage = await promotionService.GetStudentFinalAverageAsync(student.Id);
+        var semester1Average = await promotionService.GetStudentSemesterAverageAsync(student.Id, 1);
+        var semester2Average = await promotionService.GetStudentSemesterAverageAsync(student.Id, 2);
+
+        studentResults.Add(new PromotionReportStudentDto
+        {
+            Id = student.Id,
+            Name = student.Name,
+            LocalStudentNumber = student.LocalStudentNumber,  // ✅ Local ID
+            Average = finalAverage,
+            Semester1Average = semester1Average,
+            Semester2Average = semester2Average,
+            Passed = finalAverage >= 50,
+            SectionName = student.Section?.Name,
+            SectionLocalNumber = student.Section?.LocalSectionNumber ?? 0,  // ✅ Local ID
+            GradeName = student.Section?.Grade?.Name ?? "",
+            GradeLocalNumber = student.Section?.Grade?.LocalGradeNumber ?? 0  // ✅ Local ID
         });
     }
 
-    // ============================================
-    // الملف الكامل للموجه - باستخدام Local IDs
-    // ============================================
-
-    [HttpGet("counselors/{localEmployeeNumber:int}/full-profile")]
-    public async Task<IActionResult> GetCounselorFullProfile(int localEmployeeNumber)
+    var response = new PromotionReportResponse
     {
-        var counselorSchool = await db.EmployeeSchools
-            .Include(es => es.Employee)
-            .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
-                                       es.LocalEmployeeNumber == localEmployeeNumber &&
-                                       es.Role == EmployeeRole.Counselor &&
-                                       es.IsActive);
+        GradeName = grade.Name,
+        LocalGradeNumber = grade.LocalGradeNumber,  // ✅ Local ID
+        TotalStudents = students.Count,
+        PassedCount = studentResults.Count(s => s.Passed),
+        FailedCount = studentResults.Count(s => !s.Passed),
+        Students = studentResults.OrderByDescending(s => s.Average).ToList()
+    };
 
-        if (counselorSchool is null)
-            return NotFound(new { message = $"لا يوجد موجه برقم {localEmployeeNumber} في هذه المدرسة" });
+    return Ok(new
+    {
+        success = true,
+        message = "تم جلب تقرير الترقية بنجاح",
+        data = response
+    });
+}
+// ============================================
+// دوال مساعدة لحفظ وحذف الصور
+// ============================================
 
-        var counselor = counselorSchool.Employee;
-        if (counselor is null)
-            return NotFound(new { message = "الموجه غير موجود" });
+private async Task<string> SaveScheduleImageAsync(IFormFile image)
+{
+    var uploadsFolder = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "schedules");
+    
+    if (!Directory.Exists(uploadsFolder))
+        Directory.CreateDirectory(uploadsFolder);
 
-        var counselorInfo = new
-        {
-            counselor.Id,
-            counselor.Name,
-            counselor.Email,
-            counselor.Phone,
-            counselor.CreatedAt,
-            LocalEmployeeNumber = counselorSchool.LocalEmployeeNumber
-        };
+    var uniqueFileName = $"{Guid.NewGuid()}_{image.FileName}";
+    var filePath = Path.Combine(uploadsFolder, uniqueFileName);
 
-        var sections = await db.Sections
-            .Include(s => s.Grade)
-            .Where(s => s.CounselorId == counselor.Id)
-            .Select(s => new
-            {
-                s.Id,
-                s.Name,
-                s.LocalSectionNumber,
-                GradeName = s.Grade!.Name,
-                LocalGradeNumber = s.Grade.LocalGradeNumber,
-                StudentsCount = db.Students.Count(x => x.SectionId == s.Id)
-            })
-            .ToListAsync();
-
-        var warnings = await db.Warnings
-            .Include(w => w.Student)
-            .Where(w => db.Students.Any(s => s.Id == w.StudentId && s.SectionId != null &&
-                db.Sections.Any(x => x.Id == s.SectionId && x.CounselorId == counselor.Id)))
-            .OrderByDescending(w => w.CreatedAt).Take(100)
-            .Select(w => new
-            {
-                w.Id,
-                w.StudentId,
-                StudentName = w.Student!.Name,
-                StudentLocalNumber = w.Student.LocalStudentNumber,
-                w.Type,
-                w.Reason,
-                w.CreatedAt
-            })
-            .ToListAsync();
-
-        var summons = await db.GuardianSummons
-            .Include(s => s.Student)
-            .Where(s => db.Students.Any(st => st.Id == s.StudentId && st.SectionId != null &&
-                db.Sections.Any(x => x.Id == st.SectionId && x.CounselorId == counselor.Id)))
-            .OrderByDescending(s => s.CreatedAt).Take(100)
-            .Select(s => new
-            {
-                s.Id,
-                s.StudentId,
-                StudentName = s.Student!.Name,
-                StudentLocalNumber = s.Student.LocalStudentNumber,
-                s.Reason,
-                s.Date,
-                s.CreatedAt
-            })
-            .ToListAsync();
-
-        var recentAttendance = await db.StudentAttendances
-            .Include(a => a.Student)
-            .Where(a => db.Students.Any(s => s.Id == a.StudentId && s.SectionId != null &&
-                db.Sections.Any(x => x.Id == s.SectionId && x.CounselorId == counselor.Id)))
-            .OrderByDescending(a => a.Date).Take(100)
-            .Select(a => new
-            {
-                a.StudentId,
-                StudentName = a.Student!.Name,
-                StudentLocalNumber = a.Student.LocalStudentNumber,
-                a.Date,
-                a.Status
-            })
-            .ToListAsync();
-
-        var totalStudents = await db.Students
-            .CountAsync(s => s.SectionId != null &&
-                db.Sections.Any(x => x.Id == s.SectionId && x.CounselorId == counselor.Id));
-
-        var totalWarnings = warnings.Count;
-        var totalSummons = summons.Count;
-
-        return Ok(new
-        {
-            counselor = counselorInfo,
-            statistics = new
-            {
-                totalSections = sections.Count,
-                totalStudents = totalStudents,
-                totalWarnings = totalWarnings,
-                totalSummons = totalSummons
-            },
-            sections = sections,
-            warnings = warnings,
-            summons = summons,
-            recentAttendance = recentAttendance
-        });
+    using (var fileStream = new FileStream(filePath, FileMode.Create))
+    {
+        await image.CopyToAsync(fileStream);
     }
 
-    // ============================================
-    // ترقية الطلاب (Promotion)
-    // ============================================
+    return $"/uploads/schedules/{uniqueFileName}";
+}
 
-    [HttpPost("promote-students")]
-    public async Task<IActionResult> PromoteStudents(PromoteRequest request)
-    {
-        try
-        {
-            if (request.Semester != 2)
-            {
-                return BadRequest(new { message = "لا يمكن الترقية إلا في نهاية الفصل الدراسي الثاني" });
-            }
+private void DeleteScheduleImageFile(string imageUrl)
+{
+    if (string.IsNullOrEmpty(imageUrl))
+        return;
 
-            var result = await promotionService.PromoteStudentsAsync(
-                SchoolId,
-                request.CurrentGradeNumber,
-                request.CurrentAcademicYear,
-                request.NextAcademicYear,
-                request.Semester);
+    var fileName = Path.GetFileName(imageUrl);
+    var filePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "schedules", fileName);
 
-            return Ok(result);
-        }
-        catch (Exception ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
-    }
-
-    [HttpGet("promotion-report")]
-    public async Task<IActionResult> GetPromotionReport(
-        [FromQuery] int localGradeNumber,
-        [FromQuery] int academicYear,
-        [FromQuery] int semester = 2)
-    {
-        var grade = await db.Grades
-            .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
-                                      g.LocalGradeNumber == localGradeNumber &&
-                                      g.AcademicYear == academicYear);
-
-        if (grade is null)
-            return NotFound(new { message = "الصف غير موجود" });
-
-        var students = await db.Students
-            .Include(s => s.Section)
-            .ThenInclude(s => s!.Grade)
-            .Where(s => s.SchoolId == SchoolId && 
-                        s.Section != null &&
-                        s.Section.GradeId == grade.Id &&
-                        s.IsActive)
-            .ToListAsync();
-
-        var studentResults = new List<PromotionReportStudentDto>();
-        foreach (var student in students)
-        {
-            var finalAverage = await promotionService.GetStudentFinalAverageAsync(student.Id);
-            var semester1Average = await promotionService.GetStudentSemesterAverageAsync(student.Id, 1);
-            var semester2Average = await promotionService.GetStudentSemesterAverageAsync(student.Id, 2);
-
-            studentResults.Add(new PromotionReportStudentDto
-            {
-                Id = student.Id,
-                Name = student.Name,
-                LocalStudentNumber = student.LocalStudentNumber,
-                Average = finalAverage,
-                Semester1Average = semester1Average,
-                Semester2Average = semester2Average,
-                Passed = finalAverage >= 50,
-                SectionName = student.Section?.Name,
-                SectionLocalNumber = student.Section?.LocalSectionNumber ?? 0,
-                GradeName = student.Section?.Grade?.Name ?? "",
-                GradeLocalNumber = student.Section?.Grade?.LocalGradeNumber ?? 0
-            });
-        }
-
-        var response = new PromotionReportResponse
-        {
-            GradeName = grade.Name,
-            LocalGradeNumber = grade.LocalGradeNumber,
-            TotalStudents = students.Count,
-            PassedCount = studentResults.Count(s => s.Passed),
-            FailedCount = studentResults.Count(s => !s.Passed),
-            Students = studentResults.OrderByDescending(s => s.Average).ToList()
-        };
-
-        return Ok(response);
-    }
-
-    // ============================================
-    // دوال مساعدة
-    // ============================================
-
-    private static string GetRoleName(EmployeeRole role)
-    {
-        return role switch
-        {
-            EmployeeRole.Principal => "مدير المدرسة",
-            EmployeeRole.Secretary => "أمين سر",
-            EmployeeRole.Counselor => "موجه",
-            EmployeeRole.Librarian => "أمين مكتبة",
-            EmployeeRole.ActivitySupervisor => "مشرف نشاطات",
-            EmployeeRole.Teacher => "معلم",
-            _ => role.ToString()
-        };
-    }
-
-    private async Task<string> SaveScheduleImageAsync(IFormFile image)
-    {
-        var uploadsFolder = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "schedules");
-        
-        if (!Directory.Exists(uploadsFolder))
-            Directory.CreateDirectory(uploadsFolder);
-
-        var uniqueFileName = $"{Guid.NewGuid()}_{image.FileName}";
-        var filePath = Path.Combine(uploadsFolder, uniqueFileName);
-
-        using (var fileStream = new FileStream(filePath, FileMode.Create))
-        {
-            await image.CopyToAsync(fileStream);
-        }
-
-        return $"/uploads/schedules/{uniqueFileName}";
-    }
-
-    private void DeleteScheduleImageFile(string imageUrl)
-    {
-        if (string.IsNullOrEmpty(imageUrl))
-            return;
-
-        var fileName = Path.GetFileName(imageUrl);
-        var filePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "schedules", fileName);
-
-        if (System.IO.File.Exists(filePath))
-            System.IO.File.Delete(filePath);
-    }
+    if (System.IO.File.Exists(filePath))
+        System.IO.File.Delete(filePath);
+}
 }

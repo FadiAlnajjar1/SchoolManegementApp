@@ -345,16 +345,16 @@ public class ActivitiesController(
     // الموافقة/رفض تسجيل
     // ============================================
 
-    [HttpPatch("registrations/{id:int}")]
-    public async Task<IActionResult> DecideRegistration(int id, RegistrationDecisionRequest request)
-    {
-        var registration = await db.ActivityRegistrations
-            .Include(r => r.Activity)
-            .Include(r => r.Student)
-            .FirstOrDefaultAsync(r => r.Id == id && r.Activity!.SchoolId == SchoolId);
+    [HttpPatch("registrations/{registrationId:int}")]
+public async Task<IActionResult> DecideRegistration(int registrationId, RegistrationDecisionRequest request)
+{
+    var registration = await db.ActivityRegistrations
+        .Include(r => r.Activity)
+        .Include(r => r.Student)
+        .FirstOrDefaultAsync(r => r.Id == registrationId && r.Activity!.SchoolId == SchoolId);
 
-        if (registration is null)
-            return NotFound(new { success = false, message = "التسجيل غير موجود" });
+    if (registration is null)
+        return NotFound(new { success = false, message = "التسجيل غير موجود" });
 
         // إذا كانت الموافقة، التحقق من السعة
         if (request.Status == RegistrationStatus.Approved)
@@ -394,76 +394,137 @@ public class ActivitiesController(
             }
         });
     }
+    [HttpGet("students/{localStudentNumber:int}/registrations")]
+public async Task<IActionResult> GetStudentRegistrations(int localStudentNumber)
+{
+    var student = await db.Students
+        .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
+                                  s.LocalStudentNumber == localStudentNumber);
+
+    if (student is null)
+        return NotFound(new { success = false, message = "الطالب غير موجود" });
+
+    var registrations = await db.ActivityRegistrations
+        .Where(r => r.StudentId == student.Id)
+        .Select(r => new
+        {
+            r.Id,
+            ActivityLocalId = r.Activity != null ? r.Activity.LocalActivityId : 0,
+            ActivityName = r.Activity != null ? r.Activity.Name : null,
+            r.Status,
+            r.CreatedAt
+        })
+        .ToListAsync();
+
+    return Ok(new
+    {
+        success = true,
+        message = "تم جلب تسجيلات الطالب بنجاح",
+        data = new
+        {
+            Student = new
+            {
+                student.Id,
+                student.Name,
+                student.LocalStudentNumber
+            },
+            Registrations = registrations
+        }
+    });
+}
 
     // ============================================
     // إلغاء تسجيل طالب من نشاط
     // ============================================
 
-    [HttpDelete("registrations/{id:int}")]
-    public async Task<IActionResult> CancelRegistration(int id)
+    [HttpDelete("registrations/{registrationId:int}")]
+public async Task<IActionResult> CancelRegistration(int registrationId)
+{
+    var registration = await db.ActivityRegistrations
+        .Include(r => r.Activity)
+        .FirstOrDefaultAsync(r => r.Id == registrationId && r.Activity!.SchoolId == SchoolId);
+
+    if (registration is null)
+        return NotFound(new { success = false, message = "التسجيل غير موجود" });
+
+    db.ActivityRegistrations.Remove(registration);
+    await db.SaveChangesAsync();
+
+    return Ok(new
     {
-        var registration = await db.ActivityRegistrations
-            .Include(r => r.Activity)
-            .FirstOrDefaultAsync(r => r.Id == id && r.Activity!.SchoolId == SchoolId);
-
-        if (registration is null)
-            return NotFound(new { success = false, message = "التسجيل غير موجود" });
-
-        db.ActivityRegistrations.Remove(registration);
-        await db.SaveChangesAsync();
-
-        return Ok(new
+        success = true,
+        message = "تم إلغاء التسجيل بنجاح",
+        data = new
         {
-            success = true,
-            message = "تم إلغاء التسجيل بنجاح"
-        });
-    }
+            registration.Id,
+            ActivityLocalId = registration.Activity != null ? registration.Activity.LocalActivityId : 0,
+            ActivityName = registration.Activity != null ? registration.Activity.Name : null,
+            registration.StudentId,
+            registration.CreatedAt
+        }
+    });
+}
 
     // ============================================
     // إحصائيات الأنشطة
     // ============================================
 
     [HttpGet("statistics")]
-    public async Task<IActionResult> GetStatistics()
-    {
-        var totalActivities = await db.Activities
-            .CountAsync(a => a.SchoolId == SchoolId);
+public async Task<IActionResult> GetStatistics()
+{
+    var totalActivities = await db.Activities
+        .CountAsync(a => a.SchoolId == SchoolId);
 
-        var upcomingActivities = await db.Activities
-            .CountAsync(a => a.SchoolId == SchoolId && a.CreatedAt > DateTime.UtcNow.AddDays(-7));
+    var upcomingActivities = await db.Activities
+        .CountAsync(a => a.SchoolId == SchoolId && a.CreatedAt > DateTime.UtcNow.AddDays(-7));
 
-        var totalRegistrations = await db.ActivityRegistrations
-            .CountAsync(r => r.Activity!.SchoolId == SchoolId);
+    var totalRegistrations = await db.ActivityRegistrations
+        .CountAsync(r => r.Activity!.SchoolId == SchoolId);
 
-        var pendingRegistrations = await db.ActivityRegistrations
-            .CountAsync(r => r.Activity!.SchoolId == SchoolId && r.Status == RegistrationStatus.Pending);
+    var pendingRegistrations = await db.ActivityRegistrations
+        .CountAsync(r => r.Activity!.SchoolId == SchoolId && r.Status == RegistrationStatus.Pending);
 
-        var approvedRegistrations = await db.ActivityRegistrations
-            .CountAsync(r => r.Activity!.SchoolId == SchoolId && r.Status == RegistrationStatus.Approved);
+    var approvedRegistrations = await db.ActivityRegistrations
+        .CountAsync(r => r.Activity!.SchoolId == SchoolId && r.Status == RegistrationStatus.Approved);
 
-        var activitiesByType = await db.Activities
-            .Where(a => a.SchoolId == SchoolId)
-            .GroupBy(a => a.Type)
-            .Select(g => new
-            {
-                Type = g.Key.ToString(),
-                Count = g.Count()
-            })
-            .ToListAsync();
-
-        return Ok(new
+    var activitiesByType = await db.Activities
+        .Where(a => a.SchoolId == SchoolId)
+        .GroupBy(a => a.Type)
+        .Select(g => new
         {
-            success = true,
-            message = "تم جلب الإحصائيات بنجاح",
-            data = new
-            {
-                totalActivities,
-                upcomingActivities,
-                totalRegistrations,
-                pendingRegistrations,
-                approvedRegistrations,
-                activitiesByType
-            }
-        });
-    }
+            Type = g.Key.ToString(),
+            Count = g.Count(),
+            LocalActivityIds = g.Select(a => a.LocalActivityId).ToList()  // ✅ Local IDs
+        })
+        .ToListAsync();
+
+    // ✅ أنشطة مع Local IDs
+    var topActivities = await db.Activities
+        .Where(a => a.SchoolId == SchoolId)
+        .OrderByDescending(a => db.ActivityRegistrations.Count(r => r.ActivityId == a.Id))
+        .Take(5)
+        .Select(a => new
+        {
+            LocalActivityId = a.LocalActivityId,  // ✅ Local ID
+            a.Name,
+            RegistrationsCount = db.ActivityRegistrations.Count(r => r.ActivityId == a.Id)
+        })
+        .ToListAsync();
+
+    return Ok(new
+    {
+        success = true,
+        message = "تم جلب الإحصائيات بنجاح",
+        data = new
+        {
+            totalActivities,
+            upcomingActivities,
+            totalRegistrations,
+            pendingRegistrations,
+            approvedRegistrations,
+            activitiesByType,
+            topActivities  // ✅ أنشطة مع Local IDs
+        }
+    });
+}
 }

@@ -15,11 +15,7 @@ public class ReservationRequest
 // Dtos/ReservationDecisionRequest.cs
 
 
-public class ReservationDecisionRequest
-{
-    [Required]
-    public ReservationStatus Status { get; set; }
-}
+
 // Dtos/LoanRequest.cs
 
 
