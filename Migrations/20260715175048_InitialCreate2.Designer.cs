@@ -12,8 +12,8 @@ using SchoolManagement.Api.Data;
 namespace SchoolManagement.Api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260712115147_updateAppagain")]
-    partial class updateAppagain
+    [Migration("20260715175048_InitialCreate2")]
+    partial class InitialCreate2
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -180,6 +180,13 @@ namespace SchoolManagement.Api.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("LocalActivityId")
+                        .HasColumnType("int");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
@@ -201,9 +208,11 @@ namespace SchoolManagement.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("SchoolId");
-
                     b.HasIndex("SupervisorId");
+
+                    b.HasIndex("SchoolId", "LocalActivityId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Activity_SchoolId_LocalActivityId");
 
                     b.ToTable("Activities");
                 });
@@ -308,6 +317,9 @@ namespace SchoolManagement.Api.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("bit");
 
+                    b.Property<int>("LocalAnnouncementId")
+                        .HasColumnType("int");
+
                     b.Property<int>("SchoolId")
                         .HasColumnType("int");
 
@@ -324,7 +336,9 @@ namespace SchoolManagement.Api.Migrations
 
                     b.HasIndex("CreatedById");
 
-                    b.HasIndex("SchoolId");
+                    b.HasIndex("SchoolId", "LocalAnnouncementId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Announcement_SchoolId_LocalAnnouncementId");
 
                     b.ToTable("Announcements");
                 });
@@ -366,7 +380,9 @@ namespace SchoolManagement.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("SchoolId");
+                    b.HasIndex("SchoolId", "LocalBookNumber")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Book_SchoolId_LocalBookNumber");
 
                     b.ToTable("Books");
                 });
@@ -407,9 +423,14 @@ namespace SchoolManagement.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("BookId");
-
                     b.HasIndex("MemberId");
+
+                    b.HasIndex("BookId", "LocalLoanNumber")
+                        .IsUnique()
+                        .HasDatabaseName("IX_BookLoan_BookId_LocalLoanNumber");
+
+                    b.HasIndex("BookId", "MemberId", "Status")
+                        .HasDatabaseName("IX_BookLoan_BookId_MemberId_Status");
 
                     b.ToTable("BookLoans");
                 });
@@ -441,9 +462,10 @@ namespace SchoolManagement.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("BookId");
-
                     b.HasIndex("MemberId");
+
+                    b.HasIndex("BookId", "MemberId", "Status")
+                        .HasDatabaseName("IX_BookReservation_BookId_MemberId_Status");
 
                     b.ToTable("BookReservations");
                 });
@@ -660,7 +682,12 @@ namespace SchoolManagement.Api.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("StudentId")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasDatabaseName("IX_LibraryMember_StudentId");
+
+                    b.HasIndex("SchoolId", "LocalMemberNumber")
+                        .IsUnique()
+                        .HasDatabaseName("IX_LibraryMember_SchoolId_LocalMemberNumber");
 
                     b.ToTable("LibraryMembers");
                 });
@@ -943,6 +970,9 @@ namespace SchoolManagement.Api.Migrations
                     b.Property<int>("QuizNumber")
                         .HasColumnType("int");
 
+                    b.Property<int>("QuizTypeId")
+                        .HasColumnType("int");
+
                     b.Property<double>("Score")
                         .HasColumnType("float");
 
@@ -1082,7 +1112,13 @@ namespace SchoolManagement.Api.Migrations
 
                     b.HasIndex("SchoolId", "SectionId", "Type")
                         .IsUnique()
+                        .HasDatabaseName("IX_ScheduleImage_SchoolId_SectionId_Type")
                         .HasFilter("[SectionId] IS NOT NULL");
+
+                    b.HasIndex("SchoolId", "TeacherId", "Type")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ScheduleImage_SchoolId_TeacherId_Type")
+                        .HasFilter("[TeacherId] IS NOT NULL");
 
                     b.ToTable("ScheduleImages");
                 });
@@ -1258,38 +1294,6 @@ namespace SchoolManagement.Api.Migrations
                     b.ToTable("StudentGradeHistory");
                 });
 
-            modelBuilder.Entity("SchoolManagement.Api.Models.Subject", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("GradeId")
-                        .HasColumnType("int");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<int>("SchoolId")
-                        .HasColumnType("int");
-
-                    b.Property<int?>("TeacherId")
-                        .HasColumnType("int");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("GradeId");
-
-                    b.HasIndex("SchoolId");
-
-                    b.HasIndex("TeacherId");
-
-                    b.ToTable("Subject");
-                });
-
             modelBuilder.Entity("SchoolManagement.Api.Models.TeacherAssignment", b =>
                 {
                     b.Property<int>("EmployeeId")
@@ -1320,9 +1324,6 @@ namespace SchoolManagement.Api.Migrations
                     b.Property<int>("SubjectId")
                         .HasColumnType("int");
 
-                    b.Property<int>("SubjectId1")
-                        .HasColumnType("int");
-
                     b.Property<int>("TeacherId")
                         .HasColumnType("int");
 
@@ -1331,8 +1332,6 @@ namespace SchoolManagement.Api.Migrations
                     b.HasIndex("SectionId");
 
                     b.HasIndex("SubjectId");
-
-                    b.HasIndex("SubjectId1");
 
                     b.HasIndex("TeacherId", "SubjectId", "SectionId")
                         .IsUnique();
@@ -1351,13 +1350,13 @@ namespace SchoolManagement.Api.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<int>("LocalTeacherSubjectId")
+                        .HasColumnType("int");
+
                     b.Property<int>("SchoolId")
                         .HasColumnType("int");
 
                     b.Property<int>("SubjectId")
-                        .HasColumnType("int");
-
-                    b.Property<int>("SubjectId1")
                         .HasColumnType("int");
 
                     b.Property<int>("TeacherId")
@@ -1366,8 +1365,6 @@ namespace SchoolManagement.Api.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("SubjectId");
-
-                    b.HasIndex("SubjectId1");
 
                     b.HasIndex("TeacherId", "SubjectId")
                         .IsUnique();
@@ -1458,9 +1455,12 @@ namespace SchoolManagement.Api.Migrations
                     b.Property<int?>("GradeId")
                         .HasColumnType("int");
 
+                    b.Property<int>("LocalSubjectId")
+                        .HasColumnType("int");
+
                     b.Property<string>("Name")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<int>("SchoolId")
                         .HasColumnType("int");
@@ -1472,9 +1472,15 @@ namespace SchoolManagement.Api.Migrations
 
                     b.HasIndex("GradeId");
 
-                    b.HasIndex("SchoolId");
-
                     b.HasIndex("TeacherId");
+
+                    b.HasIndex("SchoolId", "LocalSubjectId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Subject_SchoolId_LocalSubjectId");
+
+                    b.HasIndex("SchoolId", "Name")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Subject_SchoolId_Name");
 
                     b.ToTable("Subjects");
                 });
@@ -1693,7 +1699,7 @@ namespace SchoolManagement.Api.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("SchoolManagement.Api.Models.Subject", "Subject")
+                    b.HasOne("Subject", "Subject")
                         .WithMany()
                         .HasForeignKey("SubjectId")
                         .OnDelete(DeleteBehavior.Restrict)
@@ -1712,7 +1718,7 @@ namespace SchoolManagement.Api.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("SchoolManagement.Api.Models.Subject", "Subject")
+                    b.HasOne("Subject", "Subject")
                         .WithMany()
                         .HasForeignKey("SubjectId")
                         .OnDelete(DeleteBehavior.Restrict)
@@ -1770,7 +1776,7 @@ namespace SchoolManagement.Api.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("SchoolManagement.Api.Models.Subject", "Subject")
+                    b.HasOne("Subject", "Subject")
                         .WithMany()
                         .HasForeignKey("SubjectId")
                         .OnDelete(DeleteBehavior.Restrict)
@@ -1899,32 +1905,6 @@ namespace SchoolManagement.Api.Migrations
                     b.Navigation("Student");
                 });
 
-            modelBuilder.Entity("SchoolManagement.Api.Models.Subject", b =>
-                {
-                    b.HasOne("Grade", "Grade")
-                        .WithMany()
-                        .HasForeignKey("GradeId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("School", "School")
-                        .WithMany()
-                        .HasForeignKey("SchoolId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("Employee", "Teacher")
-                        .WithMany()
-                        .HasForeignKey("TeacherId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.Navigation("Grade");
-
-                    b.Navigation("School");
-
-                    b.Navigation("Teacher");
-                });
-
             modelBuilder.Entity("SchoolManagement.Api.Models.TeacherGrade", b =>
                 {
                     b.HasOne("Section", "Section")
@@ -1933,15 +1913,9 @@ namespace SchoolManagement.Api.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("SchoolManagement.Api.Models.Subject", "Subject")
+                    b.HasOne("Subject", "Subject")
                         .WithMany("TeacherGrades")
                         .HasForeignKey("SubjectId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("Subject", null)
-                        .WithMany("TeacherGrades")
-                        .HasForeignKey("SubjectId1")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
@@ -1960,15 +1934,9 @@ namespace SchoolManagement.Api.Migrations
 
             modelBuilder.Entity("SchoolManagement.Api.Models.TeacherSubject", b =>
                 {
-                    b.HasOne("SchoolManagement.Api.Models.Subject", "Subject")
+                    b.HasOne("Subject", "Subject")
                         .WithMany("TeacherSubjects")
                         .HasForeignKey("SubjectId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("Subject", null)
-                        .WithMany("TeacherSubjects")
-                        .HasForeignKey("SubjectId1")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
@@ -2083,13 +2051,6 @@ namespace SchoolManagement.Api.Migrations
             modelBuilder.Entity("SchoolManagement.Api.Models.Student", b =>
                 {
                     b.Navigation("GradeHistory");
-                });
-
-            modelBuilder.Entity("SchoolManagement.Api.Models.Subject", b =>
-                {
-                    b.Navigation("TeacherGrades");
-
-                    b.Navigation("TeacherSubjects");
                 });
 
             modelBuilder.Entity("Section", b =>

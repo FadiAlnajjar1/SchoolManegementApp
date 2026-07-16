@@ -289,34 +289,41 @@ public class SecretaryController(
         if (await db.Students.AnyAsync(s => s.Email == request.Email && s.SchoolId == SchoolId))
             return BadRequest(new { success = false, message = "البريد الإلكتروني موجود مسبقاً" });
 
-        // التحقق من الشعبة
-        if (request.LocalSectionNumber.HasValue)
+        // ✅ التحقق من وجود الصف باستخدام LocalGradeNumber
+        Grade? grade = null;
+        if (request.LocalGradeNumber.HasValue)
         {
-            var sectionExists = await db.Sections
-                .AnyAsync(s => s.SchoolId == SchoolId && 
-                              s.LocalSectionNumber == request.LocalSectionNumber.Value);
+            grade = await db.Grades
+                .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                          g.LocalGradeNumber == request.LocalGradeNumber.Value);
             
-            if (!sectionExists)
-                return BadRequest(new { success = false, message = "الشعبة غير موجودة في هذه المدرسة" });
+            if (grade is null)
+                return BadRequest(new { success = false, message = $"لا يوجد صف برقم {request.LocalGradeNumber} في هذه المدرسة" });
         }
 
-        // حساب LocalStudentNumber
+        // ✅ التحقق من وجود الشعبة باستخدام LocalSectionNumber (اختياري)
+        Section? section = null;
+        if (request.LocalSectionNumber.HasValue)
+        {
+            section = await db.Sections
+                .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
+                                          s.LocalSectionNumber == request.LocalSectionNumber.Value);
+            
+            if (section is null)
+                return BadRequest(new { success = false, message = $"لا توجد شعبة برقم {request.LocalSectionNumber} في هذه المدرسة" });
+
+            // ✅ التأكد من أن الشعبة تابعة للصف المحدد
+            if (grade != null && section.GradeId != grade.Id)
+                return BadRequest(new { success = false, message = "الشعبة غير تابعة للصف المحدد" });
+        }
+
+        // ✅ حساب LocalStudentNumber
         var maxLocalNumber = await db.Students
             .Where(s => s.SchoolId == SchoolId)
             .Select(s => (int?)s.LocalStudentNumber)
             .MaxAsync() ?? 0;
 
         int newLocalNumber = maxLocalNumber + 1;
-
-        // البحث عن SectionId
-        int? sectionId = null;
-        if (request.LocalSectionNumber.HasValue)
-        {
-            var section = await db.Sections
-                .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
-                                         s.LocalSectionNumber == request.LocalSectionNumber.Value);
-            sectionId = section?.Id;
-        }
 
         var student = new Student
         {
@@ -325,7 +332,7 @@ public class SecretaryController(
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
             SchoolId = SchoolId,
             LocalStudentNumber = newLocalNumber,
-            SectionId = sectionId,
+            SectionId = section?.Id,
             GuardianName = request.GuardianName ?? "",
             GuardianPhone = request.GuardianPhone ?? "",
             BloodType = request.BloodType ?? "",
@@ -340,11 +347,14 @@ public class SecretaryController(
         db.Students.Add(student);
         await db.SaveChangesAsync();
 
+        // ✅ إرسال إشعار للطالب
+        var gradeName = grade?.Name ?? "غير محدد";
+        var sectionName = section?.Name ?? "غير محدد";
         await notifier.SendAsync(
             student.Id,
             UserType.Student,
             "مرحباً في المدرسة",
-            $"تم تسجيلك في مدرسة '{school.Name}' برقم طالب {newLocalNumber}",
+            $"تم تسجيلك في مدرسة '{school.Name}' - الصف: {gradeName} - الشعبة: {sectionName} برقم طالب {newLocalNumber}",
             "registration"
         );
 
@@ -361,7 +371,10 @@ public class SecretaryController(
                 student.SchoolId,
                 SchoolName = school.Name,
                 SectionId = student.SectionId,
-                LocalSectionNumber = request.LocalSectionNumber,
+                LocalSectionNumber = section?.LocalSectionNumber,
+                SectionName = section?.Name,
+                LocalGradeNumber = grade?.LocalGradeNumber,
+                GradeName = grade?.Name,
                 student.BirthDate,
                 student.Address,
                 student.GuardianName,
@@ -372,31 +385,63 @@ public class SecretaryController(
     }
 
     [HttpPut("students/{localStudentNumber:int}")]
-    public async Task<IActionResult> UpdateStudent(int localStudentNumber, StudentUpdateRequesting request)
+    public async Task<IActionResult> UpdateStudent(int localStudentNumber, StudentUpdateRequest request)
     {
         var student = await db.Students
+            .Include(s => s.Section)
+                .ThenInclude(sec => sec!.Grade)
             .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
                                       s.LocalStudentNumber == localStudentNumber);
 
         if (student is null)
             return NotFound(new { success = false, message = $"لا يوجد طالب برقم {localStudentNumber} في هذه المدرسة" });
 
-        // تحديث الشعبة باستخدام LocalSectionNumber
-        if (request.LocalSectionNumber.HasValue)
+        // ✅ تحديث الصف باستخدام LocalGradeNumber
+        if (request.LocalGradeNumber.HasValue)
         {
-            var sectionExists = await db.Sections
-                .AnyAsync(s => s.SchoolId == SchoolId && 
-                              s.LocalSectionNumber == request.LocalSectionNumber.Value);
+            var grade = await db.Grades
+                .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                          g.LocalGradeNumber == request.LocalGradeNumber.Value);
             
-            if (!sectionExists)
-                return BadRequest(new { success = false, message = "الشعبة غير موجودة في هذه المدرسة" });
+            if (grade is null)
+                return BadRequest(new { success = false, message = $"لا يوجد صف برقم {request.LocalGradeNumber} في هذه المدرسة" });
 
+            // ✅ إذا تم تحديث الصف، ابحث عن شعبة في الصف الجديد أو اتركها فارغة
+            if (request.LocalSectionNumber.HasValue)
+            {
+                var section = await db.Sections
+                    .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
+                                              s.LocalSectionNumber == request.LocalSectionNumber.Value &&
+                                              s.GradeId == grade.Id);
+                
+                if (section is null)
+                    return BadRequest(new { success = false, message = $"لا توجد شعبة برقم {request.LocalSectionNumber} في الصف {request.LocalGradeNumber}" });
+                
+                student.SectionId = section.Id;
+            }
+            else
+            {
+                // ✅ إذا لم يتم تحديد شعبة، حاول العثور على أول شعبة في الصف
+                var firstSection = await db.Sections
+                    .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && s.GradeId == grade.Id);
+                student.SectionId = firstSection?.Id;
+            }
+        }
+        else if (request.LocalSectionNumber.HasValue)
+        {
+            // ✅ تحديث الشعبة فقط (بدون تغيير الصف)
             var section = await db.Sections
+                .Include(s => s.Grade)
                 .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
-                                         s.LocalSectionNumber == request.LocalSectionNumber.Value);
-            student.SectionId = section?.Id;
+                                          s.LocalSectionNumber == request.LocalSectionNumber.Value);
+            
+            if (section is null)
+                return BadRequest(new { success = false, message = $"لا توجد شعبة برقم {request.LocalSectionNumber} في هذه المدرسة" });
+
+            student.SectionId = section.Id;
         }
 
+        // ✅ تحديث البيانات الشخصية
         if (!string.IsNullOrWhiteSpace(request.Name))
             student.Name = request.Name;
 
@@ -431,6 +476,12 @@ public class SecretaryController(
 
         await db.SaveChangesAsync();
 
+        // ✅ جلب البيانات المحدثة
+        var updatedStudent = await db.Students
+            .Include(s => s.Section)
+                .ThenInclude(sec => sec!.Grade)
+            .FirstOrDefaultAsync(s => s.Id == student.Id);
+
         return Ok(new
         {
             success = true,
@@ -443,7 +494,10 @@ public class SecretaryController(
                 student.LocalStudentNumber,
                 student.SchoolId,
                 student.SectionId,
-                LocalSectionNumber = student.Section?.LocalSectionNumber,
+                LocalSectionNumber = updatedStudent?.Section?.LocalSectionNumber,
+                SectionName = updatedStudent?.Section?.Name,
+                LocalGradeNumber = updatedStudent?.Section?.Grade?.LocalGradeNumber,
+                GradeName = updatedStudent?.Section?.Grade?.Name,
                 student.BirthDate,
                 student.Address,
                 student.GuardianName,
@@ -463,7 +517,7 @@ public class SecretaryController(
         if (student is null)
             return NotFound(new { success = false, message = $"لا يوجد طالب برقم {localStudentNumber} في هذه المدرسة" });
 
-        // حذف البيانات المرتبطة
+        // ✅ حذف البيانات المرتبطة
         var marks = await db.Marks.Where(m => m.StudentId == student.Id).ToListAsync();
         if (marks.Any()) db.Marks.RemoveRange(marks);
 
@@ -482,7 +536,7 @@ public class SecretaryController(
         var activityRegistrations = await db.ActivityRegistrations.Where(r => r.StudentId == student.Id).ToListAsync();
         if (activityRegistrations.Any()) db.ActivityRegistrations.RemoveRange(activityRegistrations);
 
-        // حذف عضوية المكتبة
+        // ✅ حذف عضوية المكتبة
         var libraryMember = await db.LibraryMembers.FirstOrDefaultAsync(m => m.StudentId == student.Id);
         if (libraryMember is not null)
         {
@@ -494,6 +548,10 @@ public class SecretaryController(
 
             db.LibraryMembers.Remove(libraryMember);
         }
+
+        // ✅ حذف سجل الترقيات
+        var gradeHistory = await db.StudentGradeHistory.Where(h => h.StudentId == student.Id).ToListAsync();
+        if (gradeHistory.Any()) db.StudentGradeHistory.RemoveRange(gradeHistory);
 
         db.Students.Remove(student);
         await db.SaveChangesAsync();

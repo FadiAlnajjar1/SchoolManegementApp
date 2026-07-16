@@ -5,7 +5,7 @@
 namespace SchoolManagement.Api.Migrations
 {
     /// <inheritdoc />
-    public partial class editingAddScheduleImage : Migration
+    public partial class InitialCreate1 : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)

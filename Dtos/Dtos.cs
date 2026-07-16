@@ -318,7 +318,35 @@ public class EmployeeCreateLocalRequest
     public string? Qualification { get; set; }
     public EmployeeRole Role { get; set; }
 }
-
+public class SubjectMarkDto
+{
+    public int SubjectId { get; set; }
+    public int LocalSubjectId { get; set; }
+    public string SubjectName { get; set; } = "";
+    public decimal Total { get; set; }
+    public bool IsPassed { get; set; }
+    public int Semester { get; set; }
+}
+public class AtRiskStudentDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public string Email { get; set; } = "";
+    public int LocalStudentNumber { get; set; }
+    public string? SectionName { get; set; }
+    public int LocalSectionNumber { get; set; }
+    public string? GradeName { get; set; }
+    public int LocalGradeNumber { get; set; }
+    public string? GuardianName { get; set; }
+    public string? GuardianPhone { get; set; }
+    public decimal Average { get; set; }
+    public decimal Threshold { get; set; }
+    public int TotalMarks { get; set; }
+    public int FailedSubjects { get; set; }
+    public int PassedSubjects { get; set; }
+    public object? LastReport { get; set; }
+    public List<SubjectMarkDto>? SubjectMarks { get; set; }
+}
 // Dtos/EmployeeUpdateLocalRequest.cs
 public class EmployeeUpdateLocalRequest
 {
@@ -342,6 +370,31 @@ public class MarkLocalRequest
     public decimal Quiz2 { get; set; }
     public decimal Homework { get; set; }
     public decimal FinalExam { get; set; }
+}
+public class QuizMarkUpdateRequest
+{
+    public int? Score { get; set; }
+    public int? MaxScore { get; set; }
+    public string? Notes { get; set; }
+}
+public class QuizMarkUpdateLocalRequest
+{
+    public int LocalStudentNumber { get; set; }
+    public int LocalSubjectId { get; set; }
+    public int Semester { get; set; }
+    public int QuizTypeId { get; set; }  // 1=Quiz1, 2=Quiz2, 3=Homework, 4=Oral, 5=FinalExam
+    public int? Score { get; set; }
+    public int? MaxScore { get; set; }
+    public string? Notes { get; set; }
+}
+// Dtos/QuizTypeDto.cs
+public class QuizTypeDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+    public int MaxScore { get; set; }
+    public bool IsRequired { get; set; }
 }
 public class QuizMarkLocalRequest
 {

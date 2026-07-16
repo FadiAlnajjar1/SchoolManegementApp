@@ -427,7 +427,313 @@ public class ManagerController(
             sections = sections
         });
     }
+    // ============================================
+// الطلاب المعرضين للخطر (At-Risk Students)
+// ============================================
 
+[HttpGet("at-risk-students")]
+public async Task<IActionResult> GetAtRiskStudents(
+    [FromQuery] decimal threshold = 50,
+    [FromQuery] int? localGradeNumber = null,
+    [FromQuery] int? localSectionNumber = null,
+    [FromQuery] int? semester = null)
+{
+    // ✅ جلب إعدادات العلامات من المدرسة
+    var markConfig = await db.MarkConfigs
+        .FirstOrDefaultAsync(c => c.SchoolId == SchoolId);
+
+    // ✅ إذا لم توجد إعدادات، استخدم القيم الافتراضية
+    var passPercent = markConfig?.PassPercent ?? 50;
+
+    // ✅ جلب الطلاب مع الفلترة
+    var query = db.Students
+        .Include(s => s.Section)
+            .ThenInclude(sec => sec!.Grade)
+        .Where(s => s.SchoolId == SchoolId && s.IsActive);
+
+    // ✅ فلترة حسب الصف (LocalGradeNumber)
+    if (localGradeNumber.HasValue)
+    {
+        query = query.Where(s => s.Section != null && 
+                                 s.Section.Grade != null && 
+                                 s.Section.Grade.LocalGradeNumber == localGradeNumber.Value);
+    }
+
+    // ✅ فلترة حسب الشعبة (LocalSectionNumber)
+    if (localSectionNumber.HasValue)
+    {
+        query = query.Where(s => s.Section != null && 
+                                 s.Section.LocalSectionNumber == localSectionNumber.Value);
+    }
+
+    var students = await query.ToListAsync();
+
+    // ✅ جلب جميع المواد في المدرسة (مع LocalSubjectId)
+    var subjects = await db.Subjects
+        .Where(s => s.SchoolId == SchoolId)
+        .Select(s => new
+        {
+            s.Id,
+            s.LocalSubjectId,
+            s.Name
+        })
+        .ToListAsync();
+
+    var subjectIds = subjects.Select(s => s.Id).ToList();
+
+    var atRiskStudents = new List<AtRiskStudentDto>();
+
+    foreach (var student in students)
+    {
+        // ✅ جلب علامات الطالب
+        var marksQuery = db.Marks
+            .Where(m => m.StudentId == student.Id && subjectIds.Contains(m.SubjectId));
+
+        // ✅ فلترة حسب الفصل الدراسي إذا تم إرساله
+        if (semester.HasValue)
+        {
+            marksQuery = marksQuery.Where(m => m.Semester == semester.Value);
+        }
+
+        var marks = await marksQuery
+            .Include(m => m.Subject)
+            .ToListAsync();
+
+        if (marks.Any())
+        {
+            // ✅ حساب المعدل
+            var average = marks.Average(m => m.Total);
+            
+            // ✅ التحقق من أن الطالب معرض للخطر (أقل من الحد)
+            if (average < threshold)
+            {
+                // ✅ جلب آخر تقرير أداء للطالب
+                var lastReport = await db.PerformanceReports
+                    .Where(r => r.StudentId == student.Id)
+                    .OrderByDescending(r => r.CreatedAt)
+                    .Select(r => new { r.Behavior, r.Notes, r.CreatedAt })
+                    .FirstOrDefaultAsync();
+
+                // ✅ حساب المواد الراسب فيها (أقل من passPercent)
+                var failedSubjects = marks.Count(m => m.Total < passPercent);
+                var passedSubjects = marks.Count - failedSubjects;
+
+                // ✅ تفاصيل المواد
+                var subjectMarks = marks.Select(m => new SubjectMarkDto
+                {
+                    SubjectId = m.SubjectId,
+                    LocalSubjectId = m.Subject != null ? m.Subject.LocalSubjectId : 0,
+                    SubjectName = m.Subject != null ? m.Subject.Name : "غير معروف",
+                    Total = m.Total,
+                    IsPassed = m.Total >= passPercent,
+                    Semester = m.Semester
+                }).ToList();
+
+                atRiskStudents.Add(new AtRiskStudentDto
+                {
+                    Id = student.Id,
+                    Name = student.Name,
+                    Email = student.Email,
+                    LocalStudentNumber = student.LocalStudentNumber,
+                    SectionName = student.Section?.Name,
+                    LocalSectionNumber = student.Section?.LocalSectionNumber ?? 0,
+                    GradeName = student.Section?.Grade?.Name,
+                    LocalGradeNumber = student.Section?.Grade?.LocalGradeNumber ?? 0,
+                    GuardianName = student.GuardianName,
+                    GuardianPhone = student.GuardianPhone,
+                    Average = Math.Round(average, 2),
+                    Threshold = threshold,
+                    TotalMarks = marks.Count,
+                    FailedSubjects = failedSubjects,
+                    PassedSubjects = passedSubjects,
+                    LastReport = lastReport,
+                    SubjectMarks = subjectMarks
+                });
+            }
+        }
+    }
+
+    // ✅ حساب الإحصائيات
+    var totalStudents = students.Count;
+    var totalAtRisk = atRiskStudents.Count;
+    var averageAtRisk = totalAtRisk > 0 ? Math.Round(atRiskStudents.Average(s => s.Average), 2) : 0;
+    var percentageAtRisk = totalStudents > 0 ? Math.Round((double)totalAtRisk / totalStudents * 100, 2) : 0;
+
+    // ✅ أعلى وأقل معدل بين الطلاب المعرضين للخطر
+    var minAverage = totalAtRisk > 0 ? atRiskStudents.Min(s => s.Average) : 0;
+    var maxAverage = totalAtRisk > 0 ? atRiskStudents.Max(s => s.Average) : 0;
+
+    return Ok(new
+    {
+        success = true,
+        message = "تم جلب الطلاب المعرضين للخطر بنجاح",
+        data = new
+        {
+            // ✅ معلومات التقرير
+            ReportInfo = new
+            {
+                GeneratedAt = DateTime.UtcNow,
+                SchoolId = SchoolId,
+                PassPercent = passPercent,
+                Threshold = threshold,
+                Semester = semester
+            },
+            // ✅ الإحصائيات العامة
+            Statistics = new
+            {
+                TotalStudents = totalStudents,
+                TotalAtRisk = totalAtRisk,
+                AverageAtRisk = averageAtRisk,
+                PercentageAtRisk = percentageAtRisk,
+                MinAverage = minAverage,
+                MaxAverage = maxAverage
+            },
+            // ✅ الفلاتر المستخدمة
+            Filters = new
+            {
+                LocalGradeNumber = localGradeNumber,
+                LocalSectionNumber = localSectionNumber,
+                Semester = semester
+            },
+            // ✅ قائمة الطلاب المعرضين للخطر
+            Students = atRiskStudents
+                .OrderBy(s => s.Average)  // ترتيب تصاعدي حسب المعدل (الأسوأ أولاً)
+                .ToList()
+        }
+    });
+}
+[HttpGet("at-risk-students/{localStudentNumber:int}")]
+public async Task<IActionResult> GetAtRiskStudentDetails(int localStudentNumber)
+{
+    var student = await db.Students
+        .Include(s => s.Section)
+            .ThenInclude(sec => sec!.Grade)
+        .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
+                                  s.LocalStudentNumber == localStudentNumber);
+
+    if (student is null)
+        return NotFound(new { success = false, message = $"لا يوجد طالب برقم {localStudentNumber}" });
+
+    // ✅ جلب جميع المواد في المدرسة
+    var subjectIds = await db.Subjects
+        .Where(s => s.SchoolId == SchoolId)
+        .Select(s => s.Id)
+        .ToListAsync();
+
+    // ✅ جلب علامات الطالب
+    var marks = await db.Marks
+        .Where(m => m.StudentId == student.Id && subjectIds.Contains(m.SubjectId))
+        .Include(m => m.Subject)
+        .Select(m => new
+        {
+            m.Id,
+            m.SubjectId,
+            SubjectName = m.Subject != null ? m.Subject.Name : null,
+            LocalSubjectId = m.Subject != null ? m.Subject.LocalSubjectId : 0,
+            m.Semester,
+            m.Oral,
+            m.Quiz1,
+            m.Quiz2,
+            m.Homework,
+            m.FinalExam,
+            m.Total,
+            IsPassed = m.Total >= 50,
+            m.UpdatedAt
+        })
+        .ToListAsync();
+
+    var average = marks.Any() ? Math.Round(marks.Average(m => m.Total), 2) : 0;
+    var failedSubjects = marks.Count(m => !m.IsPassed);
+    var passedSubjects = marks.Count(m => m.IsPassed);
+
+    // ✅ جلب تقارير الأداء
+    var performanceReports = await db.PerformanceReports
+        .Where(r => r.StudentId == student.Id)
+        .OrderByDescending(r => r.CreatedAt)
+        .Select(r => new
+        {
+            r.Id,
+            r.SubjectId,
+            SubjectName = r.Subject != null ? r.Subject.Name : null,
+            LocalSubjectId = r.Subject != null ? r.Subject.LocalSubjectId : 0,
+            r.Semester,
+            r.Behavior,
+            r.Notes,
+            r.CreatedAt
+        })
+        .ToListAsync();
+
+    // ✅ جلب الحضور
+    var attendance = await db.StudentAttendances
+        .Where(a => a.StudentId == student.Id)
+        .OrderByDescending(a => a.Date)
+        .Take(100)
+        .Select(a => new
+        {
+            a.Date,
+            a.Status
+        })
+        .ToListAsync();
+
+    var totalAttendance = attendance.Count;
+    var presentCount = attendance.Count(a => a.Status == AttendanceStatus.Present);
+    var absentCount = attendance.Count(a => a.Status == AttendanceStatus.Absent);
+    var attendancePercentage = totalAttendance > 0 
+        ? Math.Round((double)presentCount / totalAttendance * 100, 2) 
+        : 0;
+
+    // ✅ جلب التحذيرات
+    var warnings = await db.Warnings
+        .Where(w => w.StudentId == student.Id)
+        .OrderByDescending(w => w.CreatedAt)
+        .Select(w => new
+        {
+            w.Id,
+            w.Type,
+            w.Reason,
+            w.CreatedAt
+        })
+        .ToListAsync();
+
+    return Ok(new
+    {
+        success = true,
+        message = "تم جلب تفاصيل الطالب المعرض للخطر بنجاح",
+        data = new
+        {
+            Student = new
+            {
+                student.Id,
+                student.Name,
+                student.Email,
+                student.LocalStudentNumber,
+                SectionName = student.Section?.Name,
+                LocalSectionNumber = student.Section?.LocalSectionNumber ?? 0,
+                GradeName = student.Section?.Grade?.Name,
+                LocalGradeNumber = student.Section?.Grade?.LocalGradeNumber ?? 0,
+                student.GuardianName,
+                student.GuardianPhone,
+                student.BirthDate,
+                student.Address
+            },
+            Statistics = new
+            {
+                TotalMarks = marks.Count,
+                Average = average,
+                PassedSubjects = passedSubjects,
+                FailedSubjects = failedSubjects,
+                TotalAttendance = totalAttendance,
+                AttendancePercentage = attendancePercentage,
+                TotalWarnings = warnings.Count,
+                TotalReports = performanceReports.Count
+            },
+            Marks = marks.OrderByDescending(m => m.Semester).ThenBy(m => m.SubjectName).ToList(),
+            PerformanceReports = performanceReports,
+            Attendance = attendance.Take(30).ToList(),
+            Warnings = warnings
+        }
+    });
+}
     [HttpGet("grades/{localGradeNumber:int}/sections/{localSectionNumber:int}")]
     public async Task<IActionResult> GetSection(int localGradeNumber, int localSectionNumber)
     {

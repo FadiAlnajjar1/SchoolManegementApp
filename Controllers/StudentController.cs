@@ -779,61 +779,61 @@ public async Task<IActionResult> CancelRegistration(int localActivityId, int loc
     // التحذيرات والعقوبات
     // ============================================
 
-    [HttpGet("warnings")]
-    public async Task<IActionResult> GetMyWarnings()
-    {
-        var warnings = await db.Warnings
-            .Where(w => w.StudentId == StudentId)
-            .OrderByDescending(w => w.CreatedAt)
-            .Select(w => new
-            {
-                w.Id,
-                w.Type,
-                TypeName = w.Type.ToString(),
-                w.Reason,
-                w.CreatedAt,
-                IssuedBy = db.Employees
-                    .Where(e => e.Id == w.IssuedById)
-                    .Select(e => e.Name)
-                    .FirstOrDefault() ?? "الإدارة"
-            })
-            .ToListAsync();
+    // [HttpGet("warnings")]
+    // public async Task<IActionResult> GetMyWarnings()
+    // {
+    //     var warnings = await db.Warnings
+    //         .Where(w => w.StudentId == StudentId)
+    //         .OrderByDescending(w => w.CreatedAt)
+    //         .Select(w => new
+    //         {
+    //             w.Id,
+    //             w.Type,
+    //             TypeName = w.Type.ToString(),
+    //             w.Reason,
+    //             w.CreatedAt,
+    //             IssuedBy = db.Employees
+    //                 .Where(e => e.Id == w.IssuedById)
+    //                 .Select(e => e.Name)
+    //                 .FirstOrDefault() ?? "الإدارة"
+    //         })
+    //         .ToListAsync();
 
-        return Ok(new
-        {
-            success = true,
-            message = "تم جلب التحذيرات بنجاح",
-            data = warnings
-        });
-    }
+    //     return Ok(new
+    //     {
+    //         success = true,
+    //         message = "تم جلب التحذيرات بنجاح",
+    //         data = warnings
+    //     });
+    // }
 
-    [HttpGet("punishments")]
-    public async Task<IActionResult> GetMyPunishments()
-    {
-        var punishments = await db.Punishments
-            .Where(p => p.StudentId == StudentId)
-            .OrderByDescending(p => p.CreatedAt)
-            .Select(p => new
-            {
-                p.Id,
-                p.Type,
-                TypeName = p.Type.ToString(),
-                p.Reason,
-                p.CreatedAt,
-                IssuedBy = db.Employees
-                    .Where(e => e.Id == p.IssuedById)
-                    .Select(e => e.Name)
-                    .FirstOrDefault() ?? "الإدارة"
-            })
-            .ToListAsync();
+    // [HttpGet("punishments")]
+    // public async Task<IActionResult> GetMyPunishments()
+    // {
+    //     var punishments = await db.Punishments
+    //         .Where(p => p.StudentId == StudentId)
+    //         .OrderByDescending(p => p.CreatedAt)
+    //         .Select(p => new
+    //         {
+    //             p.Id,
+    //             p.Type,
+    //             TypeName = p.Type.ToString(),
+    //             p.Reason,
+    //             p.CreatedAt,
+    //             IssuedBy = db.Employees
+    //                 .Where(e => e.Id == p.IssuedById)
+    //                 .Select(e => e.Name)
+    //                 .FirstOrDefault() ?? "الإدارة"
+    //         })
+    //         .ToListAsync();
 
-        return Ok(new
-        {
-            success = true,
-            message = "تم جلب العقوبات بنجاح",
-            data = punishments
-        });
-    }
+    //     return Ok(new
+    //     {
+    //         success = true,
+    //         message = "تم جلب العقوبات بنجاح",
+    //         data = punishments
+    //     });
+    // }
 
     // ============================================
     // الملف الشخصي الكامل

@@ -5,7 +5,7 @@
 namespace SchoolManagement.Api.Migrations
 {
     /// <inheritdoc />
-    public partial class sixInitialCreate : Migration
+    public partial class InitialCreate3 : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)

@@ -12,7 +12,14 @@ public enum SchoolType
     PreparatorySecondary, // إعدادي وثانوي (مختلط)
     AllStages     // جميع المراحل
 }
-
+public enum QuizType
+{
+    Quiz1 = 1,
+    Quiz2 = 2,
+    Homework = 3,
+    Oral = 4,
+    FinalExam = 5
+}
 public enum EmployeeRole
 {
     Principal,          
