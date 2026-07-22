@@ -377,6 +377,33 @@ public class QuizMarkUpdateRequest
     public int? MaxScore { get; set; }
     public string? Notes { get; set; }
 }
+// Dtos/RestoreAttendanceLocalRequest.cs
+// Dtos/UpdateAttendanceLocalRequest.cs
+public class UpdateAttendanceLocalRequest
+{
+    public int LocalStudentNumber { get; set; }  // ✅ فقط LocalStudentNumber
+    public DateOnly? Date { get; set; }          // ✅ اختياري
+    public AttendanceStatus Status { get; set; }
+    public string? Justification { get; set; }
+}
+// Dtos/UpdateAbsenceLocalRequest.cs
+public class UpdateAbsenceLocalRequest
+{
+    public DateOnly? Date { get; set; }
+    public string? Justification { get; set; }
+}
+// Dtos/RecordAbsenceLocalRequest.cs
+public class RecordAbsenceLocalRequest
+{
+    public DateOnly? Date { get; set; }          // ✅ اختياري - إذا لم يتم إرساله، يستخدم تاريخ اليوم
+    public string? Justification { get; set; }   // سبب الغياب (اختياري)
+}
+// Dtos/RestoreAttendanceLocalRequest.cs
+public class RestoreAttendanceLocalRequest
+{
+    public int LocalStudentNumber { get; set; }  // ✅ فقط LocalStudentNumber
+    public DateOnly? Date { get; set; }          // ✅ اختياري
+}
 public class QuizMarkUpdateLocalRequest
 {
     public int LocalStudentNumber { get; set; }

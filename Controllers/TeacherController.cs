@@ -20,11 +20,51 @@ public class TeacherController(
     private int TeacherId => User.GetUserId();
     private int SchoolId => User.GetSchoolId();
 
-    [HttpGet("subjects")]
-    public async Task<IActionResult> GetSubjects()
+    // ✅ Helper Method للتعامل مع SchoolId - تعيد (bool isValid, int schoolId, string? errorMessage)
+    private async Task<(bool IsValid, int SchoolId, string? ErrorMessage)> GetEffectiveSchoolIdAsync(int? requestSchoolId = null)
     {
+        // إذا تم إرسال SchoolId في الطلب، تحقق من صلاحية المعلم فيه
+        if (requestSchoolId.HasValue && requestSchoolId.Value > 0)
+        {
+            var hasAccess = await db.EmployeeSchools
+                .AnyAsync(es => es.EmployeeId == TeacherId && 
+                               es.SchoolId == requestSchoolId.Value && 
+                               es.IsActive);
+            
+            if (!hasAccess)
+                return (false, 0, "ليس لديك صلاحية في هذه المدرسة");
+            
+            return (true, requestSchoolId.Value, null);
+        }
+        
+        // إذا لم يتم إرساله، تحقق من عدد المدارس التي يعمل بها المعلم
+        var schoolCount = await db.EmployeeSchools
+            .CountAsync(es => es.EmployeeId == TeacherId && es.IsActive);
+        
+        // إذا كان يعمل في مدرسة واحدة فقط، استخدمها
+        if (schoolCount == 1)
+        {
+            var school = await db.EmployeeSchools
+                .FirstOrDefaultAsync(es => es.EmployeeId == TeacherId && es.IsActive);
+            return (true, school?.SchoolId ?? 0, null);
+        }
+        
+        // إذا كان يعمل في أكثر من مدرسة ولم يرسل SchoolId، أبلغ المستخدم
+        return (false, 0, "أنت تعمل في أكثر من مدرسة. يرجى تحديد schoolId في الطلب");
+    }
+
+    [HttpGet("subjects")]
+    public async Task<IActionResult> GetSubjects([FromQuery] int? schoolId = null)
+    {
+        // ✅ التحقق من SchoolId
+        var (isValid, effectiveSchoolId, errorMessage) = await GetEffectiveSchoolIdAsync(schoolId);
+        if (!isValid)
+            return BadRequest(new { success = false, message = errorMessage });
+
         var subjects = await db.TeacherGrades
-            .Where(t => t.TeacherId == TeacherId)
+            .Where(t => t.TeacherId == TeacherId && 
+                        t.Section != null &&
+                        t.Section.SchoolId == effectiveSchoolId)
             .Include(t => t.Subject)
             .Include(t => t.Section)
                 .ThenInclude(s => s!.Grade)
@@ -84,10 +124,16 @@ public class TeacherController(
     public async Task<IActionResult> GetSectionStudents(
         int localGradeNumber,
         int localSectionNumber,
-        [FromQuery] int? localSubjectId = null)
+        [FromQuery] int? localSubjectId = null,
+        [FromQuery] int? schoolId = null)
     {
+        // ✅ التحقق من SchoolId
+        var (isValid, effectiveSchoolId, errorMessage) = await GetEffectiveSchoolIdAsync(schoolId);
+        if (!isValid)
+            return BadRequest(new { success = false, message = errorMessage });
+
         var grade = await db.Grades
-            .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+            .FirstOrDefaultAsync(g => g.SchoolId == effectiveSchoolId && 
                                       g.LocalGradeNumber == localGradeNumber);
 
         if (grade is null)
@@ -96,7 +142,7 @@ public class TeacherController(
         var section = await db.Sections
             .FirstOrDefaultAsync(s => s.GradeId == grade.Id && 
                                       s.LocalSectionNumber == localSectionNumber &&
-                                      s.SchoolId == SchoolId);
+                                      s.SchoolId == effectiveSchoolId);
 
         if (section is null)
             return NotFound(new { success = false, message = $"لا توجد شعبة برقم {localSectionNumber} في الصف {localGradeNumber}" });
@@ -111,7 +157,7 @@ public class TeacherController(
         if (localSubjectId.HasValue)
         {
             subject = await db.Subjects
-                .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
+                .FirstOrDefaultAsync(s => s.SchoolId == effectiveSchoolId && 
                                           s.LocalSubjectId == localSubjectId.Value);
 
             if (subject is null)
@@ -174,7 +220,7 @@ public class TeacherController(
                         .ToList() :
                     db.Marks
                         .Where(m => m.StudentId == s.Id && 
-                                   db.TeacherSubjects.Any(t => t.TeacherId == TeacherId && t.SubjectId == m.SubjectId))
+                                   db.TeacherGrades.Any(t => t.TeacherId == TeacherId && t.SubjectId == m.SubjectId))
                         .Select(m => new
                         {
                             m.SubjectId,
@@ -289,27 +335,34 @@ public class TeacherController(
     }
 
     [HttpPost("marks/quiz")]
-    public async Task<IActionResult> AddQuizMark(QuizMarkRequest request)
+    public async Task<IActionResult> AddQuizMark(
+        [FromBody] QuizMarkRequest request,
+        [FromQuery] int? schoolId = null)
     {
+        // ✅ التحقق من SchoolId
+        var (isValid, effectiveSchoolId, errorMessage) = await GetEffectiveSchoolIdAsync(schoolId);
+        if (!isValid)
+            return BadRequest(new { success = false, message = errorMessage });
+
         var blocked = await rules.ValidateSecondPeriodAttendanceTakenAsync(TeacherId);
         if (blocked is not null) 
             return StatusCode(403, new { message = blocked });
 
         var subject = await db.Subjects
-            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+            .FirstOrDefaultAsync(s => s.SchoolId == effectiveSchoolId &&
                                       s.LocalSubjectId == request.LocalSubjectId);
 
         if (subject is null)
             return BadRequest(new { success = false, message = $"لا توجد مادة برقم {request.LocalSubjectId}" });
 
-        var teacherSubject = await db.TeacherSubjects
+        var teacherSubject = await db.TeacherGrades
             .FirstOrDefaultAsync(t => t.TeacherId == TeacherId && t.SubjectId == subject.Id);
         
         if (teacherSubject is null) 
             return BadRequest(new { success = false, message = "هذه المادة ليست من موادك" });
 
         var student = await db.Students
-            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+            .FirstOrDefaultAsync(s => s.SchoolId == effectiveSchoolId &&
                                       s.LocalStudentNumber == request.LocalStudentNumber);
         
         if (student is null) 
@@ -331,7 +384,7 @@ public class TeacherController(
                 SubjectId = subject.Id,
                 Semester = request.Semester,
                 EnteredById = TeacherId,
-                
+                SchoolId = effectiveSchoolId
             };
             db.Marks.Add(existingMark);
         }
@@ -392,27 +445,34 @@ public class TeacherController(
     }
 
     [HttpPut("marks/quiz")]
-    public async Task<IActionResult> UpdateQuizMark(QuizMarkUpdateLocalRequest request)
+    public async Task<IActionResult> UpdateQuizMark(
+        [FromBody] QuizMarkUpdateLocalRequest request,
+        [FromQuery] int? schoolId = null)
     {
+        // ✅ التحقق من SchoolId
+        var (isValid, effectiveSchoolId, errorMessage) = await GetEffectiveSchoolIdAsync(schoolId);
+        if (!isValid)
+            return BadRequest(new { success = false, message = errorMessage });
+
         var blocked = await rules.ValidateSecondPeriodAttendanceTakenAsync(TeacherId);
         if (blocked is not null) 
             return StatusCode(403, new { message = blocked });
 
         var student = await db.Students
-            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+            .FirstOrDefaultAsync(s => s.SchoolId == effectiveSchoolId &&
                                       s.LocalStudentNumber == request.LocalStudentNumber);
         
         if (student is null)
             return NotFound(new { success = false, message = $"لا يوجد طالب برقم {request.LocalStudentNumber}" });
 
         var subject = await db.Subjects
-            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+            .FirstOrDefaultAsync(s => s.SchoolId == effectiveSchoolId &&
                                       s.LocalSubjectId == request.LocalSubjectId);
 
         if (subject is null)
             return NotFound(new { success = false, message = $"لا توجد مادة برقم {request.LocalSubjectId}" });
 
-        var teacherSubject = await db.TeacherSubjects
+        var teacherSubject = await db.TeacherGrades
             .AnyAsync(t => t.TeacherId == TeacherId && t.SubjectId == subject.Id);
 
         if (!teacherSubject)
@@ -495,27 +555,33 @@ public class TeacherController(
         [FromQuery] int localStudentNumber,
         [FromQuery] int localSubjectId,
         [FromQuery] int semester,
-        [FromQuery] int quizTypeId)
+        [FromQuery] int quizTypeId,
+        [FromQuery] int? schoolId = null)
     {
+        // ✅ التحقق من SchoolId
+        var (isValid, effectiveSchoolId, errorMessage) = await GetEffectiveSchoolIdAsync(schoolId);
+        if (!isValid)
+            return BadRequest(new { success = false, message = errorMessage });
+
         var blocked = await rules.ValidateSecondPeriodAttendanceTakenAsync(TeacherId);
         if (blocked is not null) 
             return StatusCode(403, new { message = blocked });
 
         var student = await db.Students
-            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+            .FirstOrDefaultAsync(s => s.SchoolId == effectiveSchoolId &&
                                       s.LocalStudentNumber == localStudentNumber);
         
         if (student is null)
             return NotFound(new { success = false, message = $"لا يوجد طالب برقم {localStudentNumber}" });
 
         var subject = await db.Subjects
-            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+            .FirstOrDefaultAsync(s => s.SchoolId == effectiveSchoolId &&
                                       s.LocalSubjectId == localSubjectId);
 
         if (subject is null)
             return NotFound(new { success = false, message = $"لا توجد مادة برقم {localSubjectId}" });
 
-        var teacherSubject = await db.TeacherSubjects
+        var teacherSubject = await db.TeacherGrades
             .AnyAsync(t => t.TeacherId == TeacherId && t.SubjectId == subject.Id);
 
         if (!teacherSubject)
@@ -566,10 +632,15 @@ public class TeacherController(
     }
 
     [HttpGet("schedule-image")]
-    public async Task<IActionResult> GetScheduleImage()
+    public async Task<IActionResult> GetScheduleImage([FromQuery] int? schoolId = null)
     {
+        // ✅ التحقق من SchoolId
+        var (isValid, effectiveSchoolId, errorMessage) = await GetEffectiveSchoolIdAsync(schoolId);
+        if (!isValid)
+            return BadRequest(new { success = false, message = errorMessage });
+
         var image = await db.ScheduleImages
-            .Where(s => s.SchoolId == SchoolId && 
+            .Where(s => s.SchoolId == effectiveSchoolId && 
                         s.TeacherId == TeacherId && 
                         s.Type == ScheduleImageType.Teacher)
             .OrderByDescending(s => s.CreatedAt)
@@ -594,17 +665,62 @@ public class TeacherController(
     }
 
     [HttpGet("full-profile")]
-    public async Task<IActionResult> GetFullProfile()
+    public async Task<IActionResult> GetFullProfile([FromQuery] int? schoolId = null)
     {
         var me = await db.Employees.FindAsync(TeacherId);
         if (me is null) 
             return NotFound();
 
+        // ✅ تحديد المدرسة الفعالة
+        int effectiveSchoolId;
+        
+        if (schoolId.HasValue && schoolId.Value > 0)
+        {
+            var hasAccess = await db.EmployeeSchools
+                .AnyAsync(es => es.EmployeeId == TeacherId && 
+                               es.SchoolId == schoolId.Value && 
+                               es.IsActive);
+            
+            if (!hasAccess)
+                return BadRequest(new { 
+                    success = false, 
+                    message = "ليس لديك صلاحية في هذه المدرسة" 
+                });
+            
+            effectiveSchoolId = schoolId.Value;
+        }
+        else
+        {
+            var schoolCount = await db.EmployeeSchools
+                .CountAsync(es => es.EmployeeId == TeacherId && es.IsActive);
+            
+            if (schoolCount == 1)
+            {
+                var school = await db.EmployeeSchools
+                    .FirstOrDefaultAsync(es => es.EmployeeId == TeacherId && es.IsActive);
+                effectiveSchoolId = school?.SchoolId ?? 0;
+            }
+            else
+            {
+                return BadRequest(new { 
+                    success = false, 
+                    message = "أنت تعمل في أكثر من مدرسة. يرجى تحديد schoolId في الطلب" 
+                });
+            }
+        }
+
+        if (effectiveSchoolId == 0)
+            return BadRequest(new { 
+                success = false, 
+                message = "لا توجد مدرسة محددة للمعلم" 
+            });
+
         var primarySchool = await db.EmployeeSchools
             .Include(es => es.School)
-            .FirstOrDefaultAsync(es => es.EmployeeId == TeacherId && es.IsActive);
+            .FirstOrDefaultAsync(es => es.EmployeeId == TeacherId && 
+                                       es.SchoolId == effectiveSchoolId && 
+                                       es.IsActive);
 
-        var primarySchoolId = primarySchool?.SchoolId ?? 0;
         var primarySchoolName = primarySchool?.School?.Name ?? "غير معروف";
         var localEmployeeNumber = primarySchool?.LocalEmployeeNumber ?? 0;
 
@@ -614,7 +730,7 @@ public class TeacherController(
             me.Name,
             me.Email,
             LocalEmployeeNumber = localEmployeeNumber,
-            PrimarySchoolId = primarySchoolId,
+            PrimarySchoolId = effectiveSchoolId,
             PrimarySchoolName = primarySchoolName,
             me.Phone,
             me.Address,
@@ -633,7 +749,7 @@ public class TeacherController(
         foreach (var a in assignments)
         {
             var teacherData = await db.TeacherGrades
-                .Where(t => t.TeacherId == TeacherId)
+                .Where(t => t.TeacherId == TeacherId && t.Section != null && t.Section.SchoolId == a.SchoolId)
                 .Include(t => t.Subject)
                     .ThenInclude(s => s!.Grade)
                 .Include(t => t.Section)
@@ -701,7 +817,8 @@ public class TeacherController(
         }
 
         var marks = await db.Marks
-            .Where(m => db.TeacherSubjects.Any(t => t.TeacherId == TeacherId && t.SubjectId == m.SubjectId))
+            .Where(m => db.TeacherGrades.Any(t => t.TeacherId == TeacherId && t.SubjectId == m.SubjectId) &&
+                       m.SchoolId == effectiveSchoolId)
             .OrderByDescending(m => m.UpdatedAt).Take(500)
             .Select(m => new
             {
@@ -745,7 +862,7 @@ public class TeacherController(
             .ToListAsync();
 
         var perfReports = await db.PerformanceReports
-            .Where(r => r.TeacherId == TeacherId)
+            .Where(r => r.TeacherId == TeacherId && r.SchoolId == effectiveSchoolId)
             .Join(db.Subjects, r => r.SubjectId, s => s.Id, (r, s) => new { r, s })
             .OrderByDescending(x => x.r.CreatedAt)
             .Select(x => new

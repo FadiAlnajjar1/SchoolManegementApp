@@ -127,14 +127,14 @@ public static class StudentsHelper
         if (!string.IsNullOrWhiteSpace(request.BloodType))
             student.BloodType = request.BloodType;
 
-        if (!string.IsNullOrWhiteSpace(request.ChronicDiseases))
-            student.ChronicDiseases = request.ChronicDiseases;
+        // if (!string.IsNullOrWhiteSpace(request.ChronicDiseases))
+        //     student.ChronicDiseases = request.ChronicDiseases;
 
-        if (!string.IsNullOrWhiteSpace(request.Allergies))
-            student.Allergies = request.Allergies;
+        // if (!string.IsNullOrWhiteSpace(request.Allergies))
+        //     student.Allergies = request.Allergies;
 
-        if (!string.IsNullOrWhiteSpace(request.HealthNotes))
-            student.HealthNotes = request.HealthNotes;
+        // if (!string.IsNullOrWhiteSpace(request.HealthNotes))
+        //     student.HealthNotes = request.HealthNotes;
 
         if (!string.IsNullOrWhiteSpace(request.Address))
             student.Address = request.Address;
