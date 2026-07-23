@@ -387,6 +387,55 @@ public class UpdateAttendanceLocalRequest
     public string? Justification { get; set; }
 }
 // Dtos/UpdateAbsenceLocalRequest.cs
+// Dtos/SchoolWithTeachersDto.cs
+public class SchoolWithTeachersDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public string Type { get; set; } = "";
+    public string TypeName { get; set; } = "";
+    public string Address { get; set; } = "";
+    public string Phone { get; set; } = "";
+    public DateTime CreatedAt { get; set; }
+    public int EmployeesCount { get; set; }
+    public int TeachersCount { get; set; }
+    public int SectionsCount { get; set; }
+    public int StudentsCount { get; set; }
+    public int SubjectsCount { get; set; }
+    public List<TeacherDto> Teachers { get; set; } = new();
+}
+
+public class TeacherDto
+{
+    public int EmployeeId { get; set; }
+    public string Name { get; set; } = "";
+    public string Email { get; set; } = "";
+    public string Phone { get; set; } = "";
+    public int LocalEmployeeNumber { get; set; }
+    public string NationalId { get; set; } = "";
+    public string Address { get; set; } = "";
+    public DateTime? BirthDate { get; set; }
+    public string Qualification { get; set; } = "";
+    public DateTime CreatedAt { get; set; }
+    public List<SectionDto> Sections { get; set; } = new();
+    public List<SubjectDto> Subjects { get; set; } = new();
+}
+
+public class SectionDto
+{
+    public int SectionId { get; set; }
+    public string? SectionName { get; set; }
+    public int LocalSectionNumber { get; set; }
+    public string? GradeName { get; set; }
+    public int LocalGradeNumber { get; set; }
+}
+
+public class SubjectDto
+{
+    public int SubjectId { get; set; }
+    public string? SubjectName { get; set; }
+    public int LocalSubjectId { get; set; }
+}
 public class UpdateAbsenceLocalRequest
 {
     public DateOnly? Date { get; set; }
