@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using SchoolManagement.Api.Auth;
@@ -94,6 +95,8 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 
+
+
 var app = builder.Build();
 
 // ============================================
@@ -107,11 +110,26 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await DbSeeder.SeedAsync(db);
 }
+
 app.UseSwagger();
 app.UseSwaggerUI();
 
 app.UseCors();
-app.UseStaticFiles();  // ✅ استخدام الملفات الثابتة
+
+// ✅ إنشاء المجلدات داخل wwwroot
+var wwwrootPath = Directory.GetCurrentDirectory();
+var uploadsPath = Path.Combine(wwwrootPath, "wwwroot", "uploads");
+var schedulesPath = Path.Combine(uploadsPath, "schedules");
+
+if (!Directory.Exists(uploadsPath))
+    Directory.CreateDirectory(uploadsPath);
+
+if (!Directory.Exists(schedulesPath))
+    Directory.CreateDirectory(schedulesPath);
+
+// ✅ خدمة الملفات الثابتة (للمجلد wwwroot)
+app.UseStaticFiles();
+
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();

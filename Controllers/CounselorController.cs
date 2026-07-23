@@ -1134,82 +1134,78 @@ public async Task<IActionResult> GetStudentFullProfile(int localStudentNumber)
     // 5. صورة جدول الشعبة - رفع (للموجه فقط)
     // ============================================
 
-    [HttpPost("schedule-images/section")]
-public async Task<IActionResult> UploadSectionScheduleImage([FromForm] ScheduleImageRequest request)
-{
-    var school = await db.Schools.FindAsync(SchoolId);
-    if (school is null)
-        return BadRequest(new { message = "المدرسة غير موجودة" });
+//     [HttpPost("schedule-images/section")]
+// public async Task<IActionResult> UploadSectionScheduleImage([FromForm] ScheduleImageRequest request)
+// {
+//     var school = await db.Schools.FindAsync(SchoolId);
+//     if (school is null)
+//         return BadRequest(new { message = "المدرسة غير موجودة" });
 
-    // ✅ البحث عن الصف باستخدام LocalGradeNumber
-    var grade = await db.Grades
-        .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
-                                  g.LocalGradeNumber == request.LocalGradeNumber);
-    if (grade is null)
-        return BadRequest(new { message = $"لا يوجد صف برقم {request.LocalGradeNumber} في هذه المدرسة" });
+//     // ✅ البحث عن الصف باستخدام LocalGradeNumber
+//     var grade = await db.Grades
+//         .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+//                                   g.LocalGradeNumber == request.LocalGradeNumber);
+//     if (grade is null)
+//         return BadRequest(new { message = $"لا يوجد صف برقم {request.LocalGradeNumber} في هذه المدرسة" });
 
-    // ✅ البحث عن الشعبة باستخدام LocalSectionNumber
-    var section = await db.Sections
-        .FirstOrDefaultAsync(s => s.GradeId == grade.Id && 
-                                  s.LocalSectionNumber == request.LocalSectionNumber &&
-                                  s.SchoolId == SchoolId);
+//     // ✅ البحث عن الشعبة باستخدام LocalSectionNumber
+//     var section = await db.Sections
+//         .FirstOrDefaultAsync(s => s.GradeId == grade.Id && 
+//                                   s.LocalSectionNumber == request.LocalSectionNumber &&
+//                                   s.SchoolId == SchoolId);
     
-    if (section is null)
-        return BadRequest(new { message = $"لا توجد شعبة برقم {request.LocalSectionNumber} في الصف {request.LocalGradeNumber}" });
+//     if (section is null)
+//         return BadRequest(new { message = $"لا توجد شعبة برقم {request.LocalSectionNumber} في الصف {request.LocalGradeNumber}" });
 
-    // ✅ التحقق من أن المستخدم هو الموجه المشرف على الشعبة
-    if (section.CounselorId != CounselorId)
-        return BadRequest(new { message = "أنت غير مشرف على هذه الشعبة" });
+//     // ✅ التحقق من أن المستخدم هو الموجه المشرف على الشعبة
+//     if (section.CounselorId != CounselorId)
+//         return BadRequest(new { message = "أنت غير مشرف على هذه الشعبة" });
 
-    var imageUrl = await SaveScheduleImageAsync(request.Image);
+//     var imageUrl = await SaveScheduleImageAsync(request.Image);
 
-    var existingImage = await db.ScheduleImages
-        .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
-                                  s.SectionId == section.Id && 
-                                  s.Type == ScheduleImageType.Section);
+//     var existingImage = await db.ScheduleImages
+//         .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
+//                                   s.SectionId == section.Id && 
+//                                   s.Type == ScheduleImageType.Section);
 
-    if (existingImage is not null)
-    {
-        DeleteScheduleImageFile(existingImage.ImageUrl);
-        db.ScheduleImages.Remove(existingImage);
-        await db.SaveChangesAsync();
-    }
+//     if (existingImage is not null)
+//     {
+//         DeleteScheduleImageFile(existingImage.ImageUrl);
+//         db.ScheduleImages.Remove(existingImage);
+//         await db.SaveChangesAsync();
+//     }
 
-    var scheduleImage = new ScheduleImage
-    {
-        SchoolId = SchoolId,
-        GradeId = grade.Id,
-        SectionId = section.Id,
-        TeacherId = null,
-        ImageUrl = imageUrl,
-        Description = request.Description ?? $"جدول الشعبة {section.Name} - {grade.Name}",
-        Type = ScheduleImageType.Section,
-        CreatedAt = DateTime.UtcNow
-    };
+//     var scheduleImage = new ScheduleImage
+//     {
+//         SchoolId = SchoolId,
+//         GradeId = grade.Id,
+//         SectionId = section.Id,
+//         TeacherId = null,
+//         ImageUrl = imageUrl,
+//         Description = request.Description ?? $"جدول الشعبة {section.Name} - {grade.Name}",
+//         Type = ScheduleImageType.Section,
+//         CreatedAt = DateTime.UtcNow
+//     };
 
-    db.ScheduleImages.Add(scheduleImage);
-    await db.SaveChangesAsync();
+//     db.ScheduleImages.Add(scheduleImage);
+//     await db.SaveChangesAsync();
 
-    return Created($"api/counselor/schedule-images/section/{scheduleImage.Id}", new
-    {
-        message = "تم رفع صورة جدول الشعبة بنجاح",
-        scheduleImage = new
-        {
-            scheduleImage.Id,
-            scheduleImage.ImageUrl,
-            scheduleImage.Description,
-            LocalGradeNumber = grade.LocalGradeNumber,
-            GradeName = grade.Name,
-            LocalSectionNumber = section.LocalSectionNumber,
-            SectionName = section.Name,
-            scheduleImage.CreatedAt
-        }
-    });
-}
-
-    // ============================================
-    // 6. صورة جدول الشعبة - جلب (للموجه فقط)
-    // ============================================
+//     return Created($"api/counselor/schedule-images/section/{scheduleImage.Id}", new
+//     {
+//         message = "تم رفع صورة جدول الشعبة بنجاح",
+//         scheduleImage = new
+//         {
+//             scheduleImage.Id,
+//             scheduleImage.ImageUrl,
+//             scheduleImage.Description,
+//             LocalGradeNumber = grade.LocalGradeNumber,
+//             GradeName = grade.Name,
+//             LocalSectionNumber = section.LocalSectionNumber,
+//             SectionName = section.Name,
+//             scheduleImage.CreatedAt
+//         }
+//     });
+// }
 
    // ============================================
 // جلب صورة جدول الشعبة (للمعلمين والطلاب)
@@ -1260,57 +1256,57 @@ public async Task<IActionResult> GetSectionScheduleImage(int localGradeNumber, i
     // 7. صورة جدول الشعبة - حذف (للموجه فقط)
     // ============================================
 
-    [HttpDelete("schedule-images/section/{localGradeNumber:int}/{localSectionNumber:int}")]
-public async Task<IActionResult> DeleteSectionScheduleImage(int localGradeNumber, int localSectionNumber)
-{
-    // ✅ البحث عن الصف باستخدام LocalGradeNumber
-    var grade = await db.Grades
-        .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
-                                  g.LocalGradeNumber == localGradeNumber);
+//     [HttpDelete("schedule-images/section/{localGradeNumber:int}/{localSectionNumber:int}")]
+// public async Task<IActionResult> DeleteSectionScheduleImage(int localGradeNumber, int localSectionNumber)
+// {
+//     // ✅ البحث عن الصف باستخدام LocalGradeNumber
+//     var grade = await db.Grades
+//         .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+//                                   g.LocalGradeNumber == localGradeNumber);
 
-    if (grade is null)
-        return NotFound(new { message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" });
+//     if (grade is null)
+//         return NotFound(new { message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" });
 
-    // ✅ البحث عن الشعبة باستخدام LocalSectionNumber
-    var section = await db.Sections
-        .FirstOrDefaultAsync(s => s.GradeId == grade.Id && 
-                                  s.LocalSectionNumber == localSectionNumber &&
-                                  s.SchoolId == SchoolId);
+//     // ✅ البحث عن الشعبة باستخدام LocalSectionNumber
+//     var section = await db.Sections
+//         .FirstOrDefaultAsync(s => s.GradeId == grade.Id && 
+//                                   s.LocalSectionNumber == localSectionNumber &&
+//                                   s.SchoolId == SchoolId);
 
-    if (section is null)
-        return NotFound(new { message = $"لا توجد شعبة برقم {localSectionNumber} في الصف {localGradeNumber}" });
+//     if (section is null)
+//         return NotFound(new { message = $"لا توجد شعبة برقم {localSectionNumber} في الصف {localGradeNumber}" });
 
-    // ✅ التحقق من أن المستخدم هو الموجه المشرف على الشعبة
-    if (section.CounselorId != CounselorId)
-        return BadRequest(new { message = "أنت غير مشرف على هذه الشعبة" });
+//     // ✅ التحقق من أن المستخدم هو الموجه المشرف على الشعبة
+//     if (section.CounselorId != CounselorId)
+//         return BadRequest(new { message = "أنت غير مشرف على هذه الشعبة" });
 
-    // ✅ البحث عن الصورة
-    var image = await db.ScheduleImages
-        .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
-                                  s.SectionId == section.Id && 
-                                  s.Type == ScheduleImageType.Section);
+//     // ✅ البحث عن الصورة
+//     var image = await db.ScheduleImages
+//         .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
+//                                   s.SectionId == section.Id && 
+//                                   s.Type == ScheduleImageType.Section);
 
-    if (image is null)
-        return NotFound(new { message = "لا توجد صورة جدول لهذه الشعبة" });
+//     if (image is null)
+//         return NotFound(new { message = "لا توجد صورة جدول لهذه الشعبة" });
 
-    // ✅ حذف الصورة
-    DeleteScheduleImageFile(image.ImageUrl);
-    db.ScheduleImages.Remove(image);
-    await db.SaveChangesAsync();
+//     // ✅ حذف الصورة
+//     DeleteScheduleImageFile(image.ImageUrl);
+//     db.ScheduleImages.Remove(image);
+//     await db.SaveChangesAsync();
 
-    return Ok(new
-    {
-        success = true,
-        message = "تم حذف صورة جدول الشعبة بنجاح",
-        data = new
-        {
-            LocalGradeNumber = grade.LocalGradeNumber,
-            GradeName = grade.Name,
-            LocalSectionNumber = section.LocalSectionNumber,
-            SectionName = section.Name
-        }
-    });
-}
+//     return Ok(new
+//     {
+//         success = true,
+//         message = "تم حذف صورة جدول الشعبة بنجاح",
+//         data = new
+//         {
+//             LocalGradeNumber = grade.LocalGradeNumber,
+//             GradeName = grade.Name,
+//             LocalSectionNumber = section.LocalSectionNumber,
+//             SectionName = section.Name
+//         }
+//     });
+// }
 
     // ============================================
     // 8. طلاب شعبة معينة (Pagination)
