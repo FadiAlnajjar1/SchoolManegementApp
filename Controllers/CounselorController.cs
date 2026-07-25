@@ -60,7 +60,7 @@ public class CounselorController(
                 Sections = g.Select(s => new
                 {
                     s.Id,
-                    s.Name,
+                    SectionName = s.Name,
                     s.LocalSectionNumber,
                     s.CreatedAt
                 }).OrderBy(s => s.LocalSectionNumber).ToList()
@@ -84,7 +84,7 @@ public class CounselorController(
 
 [HttpGet("absences")]
 public async Task<IActionResult> GetAbsences(
-    [FromQuery] int? localStudentNumber = null,
+    // [FromQuery] int? localStudentNumber = null,  // ❌ إزالة هذا الفلتر
     [FromQuery] int? month = null,
     [FromQuery] int? year = null,
     [FromQuery] int? localGradeNumber = null,
@@ -108,12 +108,12 @@ public async Task<IActionResult> GetAbsences(
                 .ThenInclude(sec => sec!.Grade)
         .Where(a => sectionIds.Contains(a.SectionId ?? 0) && !a.IsDeleted);
 
-    // ✅ فلترة حسب الطالب (LocalStudentNumber)
-    if (localStudentNumber.HasValue)
-    {
-        query = query.Where(a => a.Student != null &&
-                                 a.Student.LocalStudentNumber == localStudentNumber.Value);
-    }
+    // ❌ حذف فلترة الطالب
+    // if (localStudentNumber.HasValue)
+    // {
+    //     query = query.Where(a => a.Student != null &&
+    //                              a.Student.LocalStudentNumber == localStudentNumber.Value);
+    // }
 
     // ✅ فلترة حسب الصف (LocalGradeNumber)
     if (localGradeNumber.HasValue)
@@ -228,7 +228,7 @@ public async Task<IActionResult> GetAbsences(
         {
             Filters = new
             {
-                LocalStudentNumber = localStudentNumber,
+                // LocalStudentNumber = localStudentNumber,  // ❌ إزالة هذا
                 Month = month,
                 Year = year,
                 LocalGradeNumber = localGradeNumber,
@@ -282,12 +282,12 @@ public async Task<IActionResult> UpdateAbsence(
     var date = request.Date ?? DateOnly.FromDateTime(DateTime.Today);
 
     // ✅ البحث عن سجل الغياب
-    var attendance = await db.StudentAttendances
+     var attendance = await db.StudentAttendances
         .Include(a => a.Student)
         .FirstOrDefaultAsync(a => a.StudentId == student.Id &&
                                   a.SectionId == student.SectionId &&
                                   a.Date == date &&
-                                  !a.IsDeleted);
+                                  !a.IsDeleted);  // ✅ أضف هذا الشرط
 
     if (attendance is null)
         return NotFound(new { 
@@ -367,7 +367,7 @@ public async Task<IActionResult> DeleteAbsence(
         .FirstOrDefaultAsync(a => a.StudentId == student.Id &&
                                   a.SectionId == student.SectionId &&
                                   a.Date == attendanceDate &&
-                                  !a.IsDeleted);
+                                  !a.IsDeleted);  // ✅ أضف هذا الشرط
 
     if (attendance is null)
         return NotFound(new { 
@@ -410,91 +410,136 @@ public async Task<IActionResult> DeleteAbsence(
 // ============================================
 
 [HttpPost("attendance/absent/{localStudentNumber}")]
-public async Task<IActionResult> RecordAbsence(
-    [FromRoute] int localStudentNumber,
-    [FromBody] RecordAbsenceLocalRequest request)
-{
-    // ✅ البحث عن الطالب
-    var student = await db.Students
-        .Include(s => s.Section)
-            .ThenInclude(sec => sec!.Grade)
-        .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
-                                  s.LocalStudentNumber == localStudentNumber);
-    
-    if (student is null)
-        return NotFound(new { success = false, message = $"لا يوجد طالب برقم {localStudentNumber}" });
-
-    // ✅ التحقق من أن الطالب في شعبة
-    if (student.SectionId is null)
-        return BadRequest(new { success = false, message = "الطالب ليس في أي شعبة" });
-
-    // ✅ التحقق من أن الشعبة تابعة للموجه
-    var section = await db.Sections
-        .FirstOrDefaultAsync(s => s.Id == student.SectionId && s.CounselorId == CounselorId);
-
-    if (section is null)
-        return BadRequest(new { success = false, message = "الطالب ليس في شعبك" });
-
-    // ✅ تحديد التاريخ
-    var date = request.Date ?? DateOnly.FromDateTime(DateTime.Today);
-
-    // ✅ التحقق من عدم وجود سجل حضور لهذا الطالب في هذا التاريخ
-    var existingAttendance = await db.StudentAttendances
-        .FirstOrDefaultAsync(a => a.StudentId == student.Id &&
-                                  a.SectionId == student.SectionId &&
-                                  a.Date == date);
-
-    if (existingAttendance is not null)
-        return BadRequest(new { 
-            success = false, 
-            message = $"يوجد بالفعل سجل حضور للطالب {localStudentNumber} في تاريخ {date}" 
-        });
-
-    // ✅ إنشاء سجل غياب جديد (مع تعيين Status = Absent بشكل افتراضي)
-    var attendance = new StudentAttendance
+    public async Task<IActionResult> RecordAbsence(
+        [FromRoute] int localStudentNumber,
+        [FromBody] RecordAbsenceLocalRequest request)
     {
-        StudentId = student.Id,
-        SectionId = student.SectionId.Value,
-        Date = date,
-        Status = AttendanceStatus.Absent,  // ✅ دائماً غياب
-        Justification = request.Justification ?? "",
-        TakenById = CounselorId,
-        CreatedAt = DateTime.UtcNow,
-        UpdatedAt = DateTime.UtcNow,
-        IsDeleted = false
-    };
+        // ✅ البحث عن الطالب
+        var student = await db.Students
+            .Include(s => s.Section)
+                .ThenInclude(sec => sec!.Grade)
+            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                      s.LocalStudentNumber == localStudentNumber);
+        
+        if (student is null)
+            return NotFound(new { success = false, message = $"لا يوجد طالب برقم {localStudentNumber}" });
 
-    db.StudentAttendances.Add(attendance);
-    await db.SaveChangesAsync();
+        // ✅ التحقق من أن الطالب في شعبة
+        if (student.SectionId is null)
+            return BadRequest(new { success = false, message = "الطالب ليس في أي شعبة" });
 
-    // ✅ إرسال إشعار لولي الأمر
-    await notifier.SendToGuardianAsync(student,
-        $"تسجيل غياب للطالب {student.Name}",
-        $"تم تسجيل غياب للطالب {student.Name} في تاريخ {date}" +
-        (string.IsNullOrEmpty(request.Justification) ? "" : $" - السبب: {request.Justification}"),
-        "absence");
+        // ✅ التحقق من أن الشعبة تابعة للموجه
+        var section = await db.Sections
+            .FirstOrDefaultAsync(s => s.Id == student.SectionId && s.CounselorId == CounselorId);
 
-    return Created($"api/counselor/attendance/absent/{localStudentNumber}/{attendance.Id}", new
-    {
-        success = true,
-        message = "تم تسجيل الغياب بنجاح",
-        data = new
+        if (section is null)
+            return BadRequest(new { success = false, message = "الطالب ليس في شعبك" });
+
+        // ✅ تحديد التاريخ
+        var date = request.Date ?? DateOnly.FromDateTime(DateTime.Today);
+
+        // ✅ البحث عن أي سجل (بما في ذلك المحذوف)
+        var existingAttendance = await db.StudentAttendances
+            .FirstOrDefaultAsync(a => a.StudentId == student.Id &&
+                                      a.SectionId == student.SectionId &&
+                                      a.Date == date);
+
+        if (existingAttendance is not null)
         {
-            attendance.Id,
-            StudentLocalNumber = student.LocalStudentNumber,
-            StudentName = student.Name,
-            LocalGradeNumber = student.Section?.Grade?.LocalGradeNumber ?? 0,
-            GradeName = student.Section?.Grade?.Name,
-            LocalSectionNumber = student.Section?.LocalSectionNumber ?? 0,
-            SectionName = student.Section?.Name,
-            attendance.Date,
-            attendance.Status,
-            StatusName = "غياب",  // ✅ دائماً غياب
-            attendance.Justification,
-            attendance.CreatedAt
+            // ✅ إذا كان السجل محذوفاً، قم بإعادة تفعيله
+            if (existingAttendance.IsDeleted)
+            {
+                existingAttendance.IsDeleted = false;
+                existingAttendance.Status = AttendanceStatus.Absent;
+                existingAttendance.Justification = request.Justification ?? "";
+                existingAttendance.TakenById = CounselorId;
+                existingAttendance.UpdatedAt = DateTime.UtcNow;
+                
+                await db.SaveChangesAsync();
+                
+                // ✅ إرسال إشعار لولي الأمر
+                await notifier.SendToGuardianAsync(student,
+                    $"تسجيل غياب للطالب {student.Name}",
+                    $"تم تسجيل غياب للطالب {student.Name} في تاريخ {date}" +
+                    (string.IsNullOrEmpty(request.Justification) ? "" : $" - السبب: {request.Justification}"),
+                    "absence");
+
+                return Ok(new
+                {
+                    success = true,
+                    message = "تم إعادة تفعيل سجل الغياب بنجاح",
+                    data = new
+                    {
+                        existingAttendance.Id,
+                        StudentLocalNumber = student.LocalStudentNumber,
+                        StudentName = student.Name,
+                        LocalGradeNumber = student.Section?.Grade?.LocalGradeNumber ?? 0,
+                        GradeName = student.Section?.Grade?.Name,
+                        LocalSectionNumber = student.Section?.LocalSectionNumber ?? 0,
+                        SectionName = student.Section?.Name,
+                        existingAttendance.Date,
+                        existingAttendance.Status,
+                        StatusName = "غياب",
+                        existingAttendance.Justification,
+                        existingAttendance.UpdatedAt,
+                        WasRestored = true
+                    }
+                });
+            }
+            
+            // ✅ إذا كان السجل نشطاً، أبلغ المستخدم
+            return BadRequest(new { 
+                success = false, 
+                message = $"يوجد بالفعل سجل حضور للطالب {localStudentNumber} في تاريخ {date}" 
+            });
         }
-    });
-}
+
+        // ✅ إنشاء سجل غياب جديد
+        var attendance = new StudentAttendance
+        {
+            StudentId = student.Id,
+            SectionId = student.SectionId.Value,
+            Date = date,
+            Status = AttendanceStatus.Absent,
+            Justification = request.Justification ?? "",
+            TakenById = CounselorId,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+            IsDeleted = false
+        };
+
+        db.StudentAttendances.Add(attendance);
+        await db.SaveChangesAsync();
+
+        // ✅ إرسال إشعار لولي الأمر
+        await notifier.SendToGuardianAsync(student,
+            $"تسجيل غياب للطالب {student.Name}",
+            $"تم تسجيل غياب للطالب {student.Name} في تاريخ {date}" +
+            (string.IsNullOrEmpty(request.Justification) ? "" : $" - السبب: {request.Justification}"),
+            "absence");
+
+        return Created($"api/counselor/attendance/absent/{localStudentNumber}/{attendance.Id}", new
+        {
+            success = true,
+            message = "تم تسجيل الغياب بنجاح",
+            data = new
+            {
+                attendance.Id,
+                StudentLocalNumber = student.LocalStudentNumber,
+                StudentName = student.Name,
+                LocalGradeNumber = student.Section?.Grade?.LocalGradeNumber ?? 0,
+                GradeName = student.Section?.Grade?.Name,
+                LocalSectionNumber = student.Section?.LocalSectionNumber ?? 0,
+                SectionName = student.Section?.Name,
+                attendance.Date,
+                attendance.Status,
+                StatusName = "غياب",
+                attendance.Justification,
+                attendance.CreatedAt,
+                WasRestored = false
+            }
+        });
+    }
 
     // ============================================
 // التحذيرات - باستخدام Local IDs
@@ -934,15 +979,14 @@ public async Task<IActionResult> GetStudentFullProfile(int localStudentNumber)
         .ToListAsync();
 
     // ✅ الحضور
-    var attendance = await db.StudentAttendances
-        .Where(a => a.StudentId == student.Id)
+     var attendance = await db.StudentAttendances
+        .Where(a => a.StudentId == student.Id && !a.IsDeleted)  // ✅ أضف هذا الشرط
         .OrderByDescending(a => a.Date)
         .Take(200)
         .Select(a => new
         {
             a.Date,
             Status = a.Status.ToString(),
-            
             LocalSectionNumber = db.Sections
                 .Where(s => s.Id == a.SectionId)
                 .Select(s => s.LocalSectionNumber)

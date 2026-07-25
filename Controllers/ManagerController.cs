@@ -1372,7 +1372,490 @@ public class ManagerController(
     // ============================================
     // إدارة الموظفين - باستخدام Local IDs
     // ============================================
+    // ============================================
+// إدارة الموظفين - إنشاء، تحديث، حذف (باستخدام Local IDs)
+// ============================================
 
+[HttpPost("employees")]
+public async Task<IActionResult> CreateEmployee(EmployeeCreateLocalRequest request)
+{
+    // 1. التحقق من وجود المدرسة
+    var school = await db.Schools.FindAsync(SchoolId);
+    if (school is null)
+        return BadRequest(new { success = false, message = "المدرسة غير موجودة" });
+
+    // 2. التحقق من عدم وجود موظف بنفس البريد الإلكتروني
+    if (await db.Employees.AnyAsync(e => e.Email == request.Email))
+        return BadRequest(new { success = false, message = "البريد الإلكتروني مستخدم بالفعل" });
+
+    // 3. التحقق من عدم وجود موظف بنفس الرقم الوطني
+    if (!string.IsNullOrEmpty(request.NationalId) && 
+        await db.Employees.AnyAsync(e => e.NationalId == request.NationalId))
+        return BadRequest(new { success = false, message = "الرقم الوطني مستخدم بالفعل" });
+
+    // 4. التحقق من الأدوار الفريدة
+    if (IsUniqueRole(request.Role))
+    {
+        var existingRole = await db.EmployeeSchools
+            .AnyAsync(es => es.SchoolId == SchoolId &&
+                           es.Role == request.Role &&
+                           es.IsActive);
+
+        if (existingRole)
+            return BadRequest(new { success = false, message = $"الوظيفة '{GetRoleName(request.Role)}' مشغولة بالفعل في هذه المدرسة" });
+    }
+
+    // 5. إنشاء الموظف
+    var employee = new Employee
+    {
+        Name = request.Name,
+        Email = request.Email,
+        PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+        NationalId = request.NationalId ?? "",
+        Phone = request.Phone ?? "",
+        Address = request.Address ?? "",
+        BirthDate = request.BirthDate,
+        Qualification = request.Qualification ?? "",
+        CreatedAt = DateTime.UtcNow
+    };
+
+    db.Employees.Add(employee);
+    await db.SaveChangesAsync();
+
+    // 6. حساب LocalEmployeeNumber
+    var maxLocalNumber = await db.EmployeeSchools
+        .Where(es => es.SchoolId == SchoolId)
+        .Select(es => (int?)es.LocalEmployeeNumber)
+        .MaxAsync() ?? 0;
+
+    int newLocalNumber = maxLocalNumber + 1;
+
+    // 7. ربط الموظف بالمدرسة
+    var employeeSchool = new EmployeeSchool
+    {
+        EmployeeId = employee.Id,
+        SchoolId = SchoolId,
+        LocalEmployeeNumber = newLocalNumber,
+        Role = request.Role,
+        IsActive = true,
+        CreatedAt = DateTime.UtcNow
+    };
+
+    db.EmployeeSchools.Add(employeeSchool);
+
+    // 8. إذا كان معلم، أضف TeacherAssignment
+    if (request.Role == EmployeeRole.Teacher)
+    {
+        db.TeacherAssignments.Add(new TeacherAssignment
+        {
+            EmployeeId = employee.Id,
+            SchoolId = SchoolId
+        });
+    }
+
+    await db.SaveChangesAsync();
+
+    // 9. إشعار للموظف الجديد
+    await notifier.SendAsync(employee.Id, UserType.Employee,
+        "مرحباً في المدرسة",
+        $"تم تسجيلك في مدرسة '{school.Name}' برقم موظف {newLocalNumber}",
+        "registration");
+
+    return Created($"api/manager/employees/{newLocalNumber}", new
+    {
+        success = true,
+        message = "تم إنشاء الموظف وربطه بالمدرسة بنجاح",
+        data = new
+        {
+            employee.Id,
+            employee.Name,
+            employee.Email,
+            LocalEmployeeNumber = newLocalNumber,
+            employee.NationalId,
+            employee.Phone,
+            employee.Address,
+            employee.BirthDate,
+            employee.Qualification,
+            Role = request.Role.ToString(),
+            RoleName = GetRoleName(request.Role),
+            SchoolId = SchoolId,
+            SchoolName = school.Name,
+            employee.CreatedAt
+        }
+    });
+}
+
+[HttpPut("employees/{localEmployeeNumber:int}")]
+public async Task<IActionResult> UpdateEmployee(int localEmployeeNumber, EmployeeUpdateLocalRequest request)
+{
+    // 1. البحث عن الموظف في المدرسة
+    var employeeSchool = await db.EmployeeSchools
+        .Include(es => es.Employee)
+        .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
+                                  es.LocalEmployeeNumber == localEmployeeNumber &&
+                                  es.IsActive);
+
+    if (employeeSchool is null)
+        return NotFound(new { success = false, message = $"لا يوجد موظف برقم {localEmployeeNumber} في هذه المدرسة" });
+
+    var employee = employeeSchool.Employee;
+    if (employee is null)
+        return NotFound(new { success = false, message = "الموظف غير موجود" });
+
+    // 2. تحديث البيانات الأساسية
+    if (!string.IsNullOrWhiteSpace(request.Name))
+        employee.Name = request.Name;
+
+    if (!string.IsNullOrWhiteSpace(request.Email))
+    {
+        var existingEmail = await db.Employees
+            .AnyAsync(e => e.Email == request.Email && e.Id != employee.Id);
+        
+        if (existingEmail)
+            return BadRequest(new { success = false, message = "البريد الإلكتروني مستخدم بالفعل" });
+
+        employee.Email = request.Email;
+    }
+
+    if (!string.IsNullOrWhiteSpace(request.NationalId))
+    {
+        var existingNationalId = await db.Employees
+            .AnyAsync(e => e.NationalId == request.NationalId && e.Id != employee.Id);
+        
+        if (existingNationalId)
+            return BadRequest(new { success = false, message = "الرقم الوطني مستخدم بالفعل" });
+
+        employee.NationalId = request.NationalId;
+    }
+
+    if (!string.IsNullOrWhiteSpace(request.Phone))
+        employee.Phone = request.Phone;
+
+    if (!string.IsNullOrWhiteSpace(request.Address))
+        employee.Address = request.Address;
+
+    if (request.BirthDate.HasValue)
+        employee.BirthDate = request.BirthDate;
+
+    if (!string.IsNullOrWhiteSpace(request.Qualification))
+        employee.Qualification = request.Qualification;
+
+    if (!string.IsNullOrWhiteSpace(request.Password))
+        employee.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
+
+    // 3. تحديث الدور إذا تم إرساله
+    if (request.Role.HasValue && request.Role.Value != employeeSchool.Role)
+    {
+        // التحقق من الأدوار الفريدة
+        if (IsUniqueRole(request.Role.Value))
+        {
+            var existingRole = await db.EmployeeSchools
+                .AnyAsync(es => es.Role == request.Role.Value &&
+                               es.SchoolId == SchoolId &&
+                               es.EmployeeId != employee.Id &&
+                               es.IsActive);
+
+            if (existingRole)
+                return BadRequest(new { success = false, message = $"الدور '{GetRoleName(request.Role.Value)}' مشغول بالفعل في هذه المدرسة" });
+        }
+
+        // إذا كان الدور الجديد معلم، أضف TeacherAssignment
+        if (request.Role.Value == EmployeeRole.Teacher)
+        {
+            var existingAssignment = await db.TeacherAssignments
+                .FirstOrDefaultAsync(t => t.EmployeeId == employee.Id && t.SchoolId == SchoolId);
+
+            if (existingAssignment is null)
+            {
+                db.TeacherAssignments.Add(new TeacherAssignment
+                {
+                    EmployeeId = employee.Id,
+                    SchoolId = SchoolId
+                });
+            }
+        }
+        else
+        {
+            // إذا لم يعد معلم، احذف TeacherAssignment
+            var assignments = await db.TeacherAssignments
+                .Where(t => t.EmployeeId == employee.Id && t.SchoolId == SchoolId)
+                .ToListAsync();
+
+            if (assignments.Any())
+                db.TeacherAssignments.RemoveRange(assignments);
+        }
+
+        employeeSchool.Role = request.Role.Value;
+    }
+
+    await db.SaveChangesAsync();
+
+    return Ok(new
+    {
+        success = true,
+        message = "تم تحديث بيانات الموظف بنجاح",
+        data = new
+        {
+            employee.Id,
+            employee.Name,
+            employee.Email,
+            LocalEmployeeNumber = localEmployeeNumber,
+            employee.NationalId,
+            employee.Phone,
+            employee.Address,
+            employee.BirthDate,
+            employee.Qualification,
+            Role = employeeSchool.Role.ToString(),
+            RoleName = GetRoleName(employeeSchool.Role),
+            employee.CreatedAt
+        }
+    });
+}
+
+[HttpDelete("employees/{localEmployeeNumber:int}")]
+public async Task<IActionResult> DeleteEmployee(int localEmployeeNumber)
+{
+    // 1. البحث عن الموظف في المدرسة
+    var employeeSchool = await db.EmployeeSchools
+        .Include(es => es.Employee)
+        .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
+                                  es.LocalEmployeeNumber == localEmployeeNumber &&
+                                  es.IsActive);
+
+    if (employeeSchool is null)
+        return NotFound(new { success = false, message = $"لا يوجد موظف برقم {localEmployeeNumber} في هذه المدرسة" });
+
+    var employee = employeeSchool.Employee;
+    if (employee is null)
+        return NotFound(new { success = false, message = "الموظف غير موجود" });
+
+    // 2. التحقق من أن الموظف ليس مدير المدرسة
+    if (employeeSchool.Role == EmployeeRole.Principal)
+        return BadRequest(new { success = false, message = "لا يمكن حذف مدير المدرسة" });
+
+    // 3. التحقق من أن الموظف ليس له علاقات نشطة في مدارس أخرى
+    var activeInOtherSchools = await db.EmployeeSchools
+        .AnyAsync(es => es.EmployeeId == employee.Id &&
+                       es.SchoolId != SchoolId &&
+                       es.IsActive);
+
+    if (activeInOtherSchools)
+    {
+        // إذا كان يعمل في مدارس أخرى، فقط قم بإلغاء الربط مع هذه المدرسة
+        employeeSchool.IsActive = false;
+
+        // حذف TeacherAssignment لهذه المدرسة فقط
+        var assignments = await db.TeacherAssignments
+            .Where(t => t.EmployeeId == employee.Id && t.SchoolId == SchoolId)
+            .ToListAsync();
+
+        if (assignments.Any())
+            db.TeacherAssignments.RemoveRange(assignments);
+
+        await db.SaveChangesAsync();
+
+        return Ok(new
+        {
+            success = true,
+            message = "تم إلغاء ربط الموظف بالمدرسة بنجاح (لا يزال يعمل في مدارس أخرى)",
+            data = new
+            {
+                employee.Id,
+                employee.Name,
+                LocalEmployeeNumber = localEmployeeNumber,
+                SchoolId = SchoolId,
+                StillActiveInOtherSchools = true
+            }
+        });
+    }
+
+    // 4. حذف جميع البيانات المرتبطة
+    // حضور الموظف
+    var attendances = await db.EmployeeAttendances
+        .Where(a => a.EmployeeId == employee.Id)
+        .ToListAsync();
+    if (attendances.Any())
+        db.EmployeeAttendances.RemoveRange(attendances);
+
+    // الإجازات
+    var leaves = await db.Leaves
+        .Where(l => l.EmployeeId == employee.Id)
+        .ToListAsync();
+    if (leaves.Any())
+        db.Leaves.RemoveRange(leaves);
+
+    // TeacherAssignments
+    var teacherAssignments = await db.TeacherAssignments
+        .Where(t => t.EmployeeId == employee.Id)
+        .ToListAsync();
+    if (teacherAssignments.Any())
+        db.TeacherAssignments.RemoveRange(teacherAssignments);
+
+    // TeacherSubjects
+    var teacherSubjects = await db.TeacherSubjects
+        .Where(t => t.TeacherId == employee.Id)
+        .ToListAsync();
+    if (teacherSubjects.Any())
+        db.TeacherSubjects.RemoveRange(teacherSubjects);
+
+    // TeacherGrades
+    var teacherGrades = await db.TeacherGrades
+        .Where(t => t.TeacherId == employee.Id)
+        .ToListAsync();
+    if (teacherGrades.Any())
+        db.TeacherGrades.RemoveRange(teacherGrades);
+
+    // 5. حذف جميع EmployeeSchools
+    var allEmployeeSchools = await db.EmployeeSchools
+        .Where(es => es.EmployeeId == employee.Id)
+        .ToListAsync();
+    if (allEmployeeSchools.Any())
+        db.EmployeeSchools.RemoveRange(allEmployeeSchools);
+
+    // 6. حذف الموظف
+    db.Employees.Remove(employee);
+    await db.SaveChangesAsync();
+
+    return Ok(new
+    {
+        success = true,
+        message = "تم حذف الموظف بنجاح",
+        data = new
+        {
+            employee.Id,
+            employee.Name,
+            employee.Email,
+            LocalEmployeeNumber = localEmployeeNumber,
+            SchoolId = SchoolId
+        }
+    });
+}
+
+[HttpPut("employees/{localEmployeeNumber:int}/role")]
+public async Task<IActionResult> UpdateEmployeeRole(int localEmployeeNumber, [FromBody] EmployeeRole newRole)
+{
+    // 1. البحث عن الموظف
+    var employeeSchool = await db.EmployeeSchools
+        .Include(es => es.Employee)
+        .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
+                                  es.LocalEmployeeNumber == localEmployeeNumber &&
+                                  es.IsActive);
+
+    if (employeeSchool is null)
+        return NotFound(new { success = false, message = $"لا يوجد موظف برقم {localEmployeeNumber} في هذه المدرسة" });
+
+    // 2. التحقق من الأدوار الفريدة
+    if (IsUniqueRole(newRole))
+    {
+        var existingRole = await db.EmployeeSchools
+            .AnyAsync(es => es.Role == newRole &&
+                           es.SchoolId == SchoolId &&
+                           es.EmployeeId != employeeSchool.EmployeeId &&
+                           es.IsActive);
+
+        if (existingRole)
+            return BadRequest(new { success = false, message = $"الدور '{GetRoleName(newRole)}' مشغول بالفعل في هذه المدرسة" });
+    }
+
+    // 3. تحديث TeacherAssignment إذا لزم الأمر
+    if (newRole == EmployeeRole.Teacher)
+    {
+        var existingAssignment = await db.TeacherAssignments
+            .FirstOrDefaultAsync(t => t.EmployeeId == employeeSchool.EmployeeId && t.SchoolId == SchoolId);
+
+        if (existingAssignment is null)
+        {
+            db.TeacherAssignments.Add(new TeacherAssignment
+            {
+                EmployeeId = employeeSchool.EmployeeId,
+                SchoolId = SchoolId
+            });
+        }
+    }
+    else
+    {
+        var assignments = await db.TeacherAssignments
+            .Where(t => t.EmployeeId == employeeSchool.EmployeeId && t.SchoolId == SchoolId)
+            .ToListAsync();
+
+        if (assignments.Any())
+            db.TeacherAssignments.RemoveRange(assignments);
+    }
+
+    // 4. تحديث الدور
+    employeeSchool.Role = newRole;
+    await db.SaveChangesAsync();
+
+    return Ok(new
+    {
+        success = true,
+        message = "تم تحديث دور الموظف بنجاح",
+        data = new
+        {
+            LocalEmployeeNumber = localEmployeeNumber,
+            EmployeeId = employeeSchool.EmployeeId,
+            EmployeeName = employeeSchool.Employee?.Name,
+            NewRole = newRole.ToString(),
+            NewRoleName = GetRoleName(newRole),
+            SchoolId = SchoolId
+        }
+    });
+}
+
+[HttpPost("employees/{localEmployeeNumber:int}/dismiss")]
+public async Task<IActionResult> DismissEmployee(int localEmployeeNumber)
+{
+    // 1. البحث عن الموظف
+    var employeeSchool = await db.EmployeeSchools
+        .Include(es => es.Employee)
+        .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
+                                  es.LocalEmployeeNumber == localEmployeeNumber &&
+                                  es.IsActive);
+
+    if (employeeSchool is null)
+        return NotFound(new { success = false, message = $"لا يوجد موظف برقم {localEmployeeNumber} في هذه المدرسة" });
+
+    var employee = employeeSchool.Employee;
+    if (employee is null)
+        return NotFound(new { success = false, message = "الموظف غير موجود" });
+
+    // 2. التحقق من أنه ليس مدير المدرسة
+    if (employeeSchool.Role == EmployeeRole.Principal)
+        return BadRequest(new { success = false, message = "لا يمكن فصل مدير المدرسة" });
+
+    // 3. تنفيذ الفصل
+    employeeSchool.IsActive = false;
+    employee.IsDismissed = true;
+
+    // 4. حذف TeacherAssignment
+    var assignments = await db.TeacherAssignments
+        .Where(t => t.EmployeeId == employee.Id && t.SchoolId == SchoolId)
+        .ToListAsync();
+
+    if (assignments.Any())
+        db.TeacherAssignments.RemoveRange(assignments);
+
+    await db.SaveChangesAsync();
+
+    // 5. إشعار بالفصل
+    await notifier.SendAsync(employee.Id, UserType.Employee, 
+        "قرار فصل", 
+        "تم فصلك من العمل", 
+        "dismissal");
+
+    return Ok(new
+    {
+        success = true,
+        message = "تم فصل الموظف بنجاح",
+        data = new
+        {
+            LocalEmployeeNumber = localEmployeeNumber,
+            EmployeeId = employee.Id,
+            EmployeeName = employee.Name,
+            SchoolId = SchoolId
+        }
+    });
+}
     [HttpGet("employees")]
     public async Task<IActionResult> GetEmployees()
     {
