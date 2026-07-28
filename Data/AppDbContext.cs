@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using SchoolManagement.Api.Dtos;
 using SchoolManagement.Api.Models;
 
 namespace SchoolManagement.Api.Data;
@@ -34,10 +35,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<GuardianSummon> GuardianSummons => Set<GuardianSummon>();
     public DbSet<Announcement> Announcements => Set<Announcement>();
     public DbSet<ScheduleImage> ScheduleImages => Set<ScheduleImage>();
+    
+    // 📚 إدارة المكتبة
     public DbSet<Book> Books => Set<Book>();
-    public DbSet<LibraryMember> LibraryMembers => Set<LibraryMember>();
     public DbSet<BookLoan> BookLoans => Set<BookLoan>();
     public DbSet<BookReservation> BookReservations => Set<BookReservation>();
+    public DbSet<BookLoanRequest> BookLoanRequests => Set<BookLoanRequest>();
+    
     public DbSet<TeacherSubject> TeacherSubjects => Set<TeacherSubject>();
     public DbSet<TeacherGrade> TeacherGrades => Set<TeacherGrade>();
     public DbSet<Activity> Activities => Set<Activity>();
@@ -91,41 +95,87 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         // Local IDs - Book
         // ============================================
         mb.Entity<Book>()
+            .Property(b => b.LocalBookNumber)
+            .IsRequired();
+
+        mb.Entity<Book>()
             .HasIndex(b => new { b.SchoolId, b.LocalBookNumber })
             .IsUnique()
             .HasDatabaseName("IX_Book_SchoolId_LocalBookNumber");
 
         // ============================================
-        // Local IDs - LibraryMember
-        // ============================================
-        mb.Entity<LibraryMember>()
-            .HasIndex(m => new { m.SchoolId, m.LocalMemberNumber })
-            .IsUnique()
-            .HasDatabaseName("IX_LibraryMember_SchoolId_LocalMemberNumber");
-
-        mb.Entity<LibraryMember>()
-            .HasIndex(m => m.StudentId)
-            .IsUnique()
-            .HasDatabaseName("IX_LibraryMember_StudentId");
-
-        // ============================================
         // Local IDs - BookLoan
         // ============================================
+        mb.Entity<BookLoan>()
+            .Property(l => l.LocalLoanNumber)
+            .IsRequired();
+
         mb.Entity<BookLoan>()
             .HasIndex(l => new { l.BookId, l.LocalLoanNumber })
             .IsUnique()
             .HasDatabaseName("IX_BookLoan_BookId_LocalLoanNumber");
 
         mb.Entity<BookLoan>()
-            .HasIndex(l => new { l.BookId, l.MemberId, l.Status })
-            .HasDatabaseName("IX_BookLoan_BookId_MemberId_Status");
+            .HasIndex(l => new { l.StudentId, l.Status })
+            .HasDatabaseName("IX_BookLoan_StudentId_Status");
 
         // ============================================
-        // Local IDs - BookReservation
+        // Local IDs - BookLoanRequest
         // ============================================
-        mb.Entity<BookReservation>()
-            .HasIndex(r => new { r.BookId, r.MemberId, r.Status })
-            .HasDatabaseName("IX_BookReservation_BookId_MemberId_Status");
+        mb.Entity<BookLoanRequest>()
+            .Property(r => r.LocalRequestNumber)
+            .IsRequired();
+
+        mb.Entity<BookLoanRequest>()
+            .HasIndex(r => new { r.BookId, r.LocalRequestNumber })
+            .IsUnique()
+            .HasDatabaseName("IX_BookLoanRequest_BookId_LocalRequestNumber");
+
+        mb.Entity<BookLoanRequest>()
+            .HasIndex(r => new { r.StudentId, r.Status })
+            .HasDatabaseName("IX_BookLoanRequest_StudentId_Status");
+
+        mb.Entity<BookLoanRequest>()
+            .HasIndex(r => new { r.BookId, r.StudentId, r.Status })
+            .HasDatabaseName("IX_BookLoanRequest_BookId_StudentId_Status");
+
+        // ============================================
+// Local IDs - BookReservation
+// ============================================
+mb.Entity<BookReservation>()
+    .HasIndex(r => new { r.BookId, r.StudentId, r.Status })
+    .HasDatabaseName("IX_BookReservation_BookId_StudentId_Status");
+
+// ✅ إزالة الفلتر مؤقتاً
+mb.Entity<BookReservation>()
+    .HasIndex(r => new { r.BookId, r.StudentId })
+    .IsUnique()
+    // .HasFilter("[Status] = 'Pending'")  // ❌ مؤقتاً
+    .HasDatabaseName("IX_BookReservation_BookId_StudentId_Unique");
+
+        // ============================================
+        // Local IDs - Activity
+        // ============================================
+        mb.Entity<Activity>()
+            .Property(a => a.LocalActivityId)
+            .IsRequired();
+
+        mb.Entity<Activity>()
+            .HasIndex(a => new { a.SchoolId, a.LocalActivityId })
+            .IsUnique()
+            .HasDatabaseName("IX_Activity_SchoolId_LocalActivityId");
+
+        // ============================================
+        // Local IDs - Announcement
+        // ============================================
+        mb.Entity<Announcement>()
+            .Property(a => a.LocalAnnouncementId)
+            .IsRequired();
+
+        mb.Entity<Announcement>()
+            .HasIndex(a => new { a.SchoolId, a.LocalAnnouncementId })
+            .IsUnique()
+            .HasDatabaseName("IX_Announcement_SchoolId_LocalAnnouncementId");
 
         // ============================================
         // Local IDs - ScheduleImage
@@ -143,9 +193,32 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .HasDatabaseName("IX_ScheduleImage_SchoolId_TeacherId_Type");
 
         // ============================================
-        // تحويل Enums إلى Strings
+        // Local IDs - Grade
+        // ============================================
+        mb.Entity<Grade>()
+            .Property(g => g.LocalGradeNumber)
+            .IsRequired();
+
+        mb.Entity<Grade>()
+            .HasIndex(g => new { g.SchoolId, g.LocalGradeNumber, g.AcademicYear })
+            .IsUnique();
+
+        // ============================================
+        // Local IDs - Section
+        // ============================================
+        mb.Entity<Section>()
+            .Property(s => s.LocalSectionNumber)
+            .IsRequired();
+
+        mb.Entity<Section>()
+            .HasIndex(s => new { s.GradeId, s.LocalSectionNumber })
+            .IsUnique();
+
+        // ============================================
+        // تحويل Enums
         // ============================================
         
+        // ✅ تحويل Enums إلى Strings
         mb.Entity<School>().Property(s => s.Type).HasConversion<string>().HasMaxLength(20);
         mb.Entity<EmployeeSchool>().Property(e => e.Role).HasConversion<string>().HasMaxLength(30);
         mb.Entity<StudentAttendance>().Property(a => a.Status).HasConversion<string>().HasMaxLength(20);
@@ -157,10 +230,20 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         mb.Entity<Announcement>().Property(a => a.Audience).HasConversion<string>().HasMaxLength(20);
         mb.Entity<Activity>().Property(a => a.Type).HasConversion<string>().HasMaxLength(20);
         mb.Entity<ActivityRegistration>().Property(r => r.Status).HasConversion<string>().HasMaxLength(20);
-        mb.Entity<BookLoan>().Property(l => l.Status).HasConversion<string>().HasMaxLength(20);
-        mb.Entity<BookReservation>().Property(r => r.Status).HasConversion<string>().HasMaxLength(20);
-        mb.Entity<LibraryMember>().Property(m => m.Status).HasConversion<string>().HasMaxLength(20);
         mb.Entity<Notification>().Property(n => n.UserType).HasConversion<string>().HasMaxLength(20);
+
+        // ✅ Enums المكتبة - تخزين كـ int (للأداء الأفضل)
+        mb.Entity<BookLoan>()
+            .Property(l => l.Status)
+            .HasConversion<int>();
+
+        mb.Entity<BookReservation>()
+            .Property(r => r.Status)
+            .HasConversion<int>();
+
+        mb.Entity<BookLoanRequest>()
+            .Property(r => r.Status)
+            .HasConversion<int>();
 
         // ============================================
         // العلاقات (Relationships)
@@ -215,10 +298,6 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .WithMany(g => g.Sections)
             .HasForeignKey(s => s.GradeId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        mb.Entity<Grade>()
-            .HasIndex(g => new { g.SchoolId, g.LocalGradeNumber, g.AcademicYear })
-            .IsUnique();
 
         // -------------------- Section --------------------
         mb.Entity<Section>()
@@ -385,12 +464,20 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .HasForeignKey(a => a.SectionId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        mb.Entity<StudentAttendance>()
+            .HasIndex(a => new { a.StudentId, a.Date })
+            .IsUnique();
+
         // -------------------- EmployeeAttendance --------------------
         mb.Entity<EmployeeAttendance>()
             .HasOne(a => a.Employee)
             .WithMany()
             .HasForeignKey(a => a.EmployeeId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        mb.Entity<EmployeeAttendance>()
+            .HasIndex(a => new { a.EmployeeId, a.Date })
+            .IsUnique();
 
         // -------------------- Leave --------------------
         mb.Entity<Leave>()
@@ -412,6 +499,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .HasForeignKey(m => m.SubjectId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        mb.Entity<Mark>()
+            .HasIndex(m => new { m.StudentId, m.SubjectId, m.Semester })
+            .IsUnique();
+
+        // -------------------- MarkConfig --------------------
+        mb.Entity<MarkConfig>().HasIndex(c => c.SchoolId).IsUnique();
+
         // -------------------- ReportCard --------------------
         mb.Entity<ReportCard>()
             .HasOne(r => r.Student)
@@ -424,6 +518,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .WithOne()
             .HasForeignKey(s => s.ReportCardId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        mb.Entity<ReportCard>()
+            .HasIndex(r => new { r.StudentId, r.Semester, r.Year })
+            .IsUnique();
 
         // -------------------- Book --------------------
         mb.Entity<Book>()
@@ -440,9 +538,35 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .OnDelete(DeleteBehavior.Restrict);
 
         mb.Entity<BookLoan>()
-            .HasOne(l => l.Member)
+            .HasOne(l => l.Student)
             .WithMany()
-            .HasForeignKey(l => l.MemberId)
+            .HasForeignKey(l => l.StudentId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // -------------------- BookReservation --------------------
+        mb.Entity<BookReservation>()
+            .HasOne(r => r.Book)
+            .WithMany()
+            .HasForeignKey(r => r.BookId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        mb.Entity<BookReservation>()
+            .HasOne(r => r.Student)
+            .WithMany()
+            .HasForeignKey(r => r.StudentId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // -------------------- BookLoanRequest --------------------
+        mb.Entity<BookLoanRequest>()
+            .HasOne(r => r.Book)
+            .WithMany()
+            .HasForeignKey(r => r.BookId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        mb.Entity<BookLoanRequest>()
+            .HasOne(r => r.Student)
+            .WithMany()
+            .HasForeignKey(r => r.StudentId)
             .OnDelete(DeleteBehavior.Restrict);
 
         // -------------------- Activity --------------------
@@ -470,6 +594,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .WithMany()
             .HasForeignKey(r => r.StudentId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        mb.Entity<ActivityRegistration>()
+            .HasIndex(r => new { r.ActivityId, r.StudentId })
+            .IsUnique();
 
         // -------------------- Complaint --------------------
         mb.Entity<Complaint>()
@@ -503,42 +631,6 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .WithMany()
             .HasForeignKey(a => a.SchoolId)
             .OnDelete(DeleteBehavior.Restrict);
-        // في AppDbContext.cs - داخل OnModelCreating
-
-// ✅ Activity - LocalActivityId
-mb.Entity<Activity>()
-    .HasIndex(a => new { a.SchoolId, a.LocalActivityId })
-    .IsUnique()
-    .HasDatabaseName("IX_Activity_SchoolId_LocalActivityId");
-
-// ✅ Announcement - LocalAnnouncementId
-mb.Entity<Announcement>()
-    .HasIndex(a => new { a.SchoolId, a.LocalAnnouncementId })
-    .IsUnique()
-    .HasDatabaseName("IX_Announcement_SchoolId_LocalAnnouncementId");
-        // ============================================
-        // الفهارس المركبة
-        // ============================================
-        
-        mb.Entity<MarkConfig>().HasIndex(c => c.SchoolId).IsUnique();
-        mb.Entity<Mark>().HasIndex(m => new { m.StudentId, m.SubjectId, m.Semester }).IsUnique();
-        mb.Entity<StudentAttendance>().HasIndex(a => new { a.StudentId, a.Date }).IsUnique();
-        mb.Entity<EmployeeAttendance>().HasIndex(a => new { a.EmployeeId, a.Date }).IsUnique();
-        mb.Entity<ReportCard>().HasIndex(r => new { r.StudentId, r.Semester, r.Year }).IsUnique();
-        mb.Entity<Section>().HasIndex(s => new { s.GradeId, s.LocalSectionNumber }).IsUnique();
-        mb.Entity<LibraryMember>().HasIndex(m => m.StudentId).IsUnique();
-        mb.Entity<ActivityRegistration>().HasIndex(r => new { r.ActivityId, r.StudentId }).IsUnique();
-
-        // ============================================
-        // تكوين الأعمدة من نوع decimal
-        // ============================================
-        
-        foreach (var property in mb.Model.GetEntityTypes()
-                     .SelectMany(t => t.GetProperties())
-                     .Where(p => p.ClrType == typeof(decimal)))
-        {
-            property.SetColumnType("decimal(6,2)");
-        }
 
         // ============================================
         // سلوك الحذف الافتراضي

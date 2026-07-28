@@ -2159,81 +2159,127 @@ public async Task<IActionResult> DismissEmployee(int localEmployeeNumber)
     }
 
     [HttpDelete("students/{localStudentNumber:int}")]
-    public async Task<IActionResult> DeleteStudent(int localStudentNumber)
+public async Task<IActionResult> DeleteStudent(int localStudentNumber)
+{
+    var student = await db.Students
+        .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                  s.LocalStudentNumber == localStudentNumber);
+
+    if (student is null)
+        return NotFound(new { message = $"لا يوجد طالب برقم {localStudentNumber} في هذه المدرسة" });
+
+    // 1. حذف العلامات (Marks)
+    var marks = await db.Marks
+        .Where(m => m.StudentId == student.Id)
+        .ToListAsync();
+    if (marks.Any())
+        db.Marks.RemoveRange(marks);
+
+    // 2. حذف بطاقات التقارير (ReportCards)
+    var reportCards = await db.ReportCards
+        .Where(r => r.StudentId == student.Id)
+        .ToListAsync();
+    if (reportCards.Any())
+        db.ReportCards.RemoveRange(reportCards);
+
+    // 3. حذف سجلات الحضور (StudentAttendances)
+    var attendances = await db.StudentAttendances
+        .Where(a => a.StudentId == student.Id)
+        .ToListAsync();
+    if (attendances.Any())
+        db.StudentAttendances.RemoveRange(attendances);
+
+    // 4. حذف التحذيرات (Warnings)
+    var warnings = await db.Warnings
+        .Where(w => w.StudentId == student.Id)
+        .ToListAsync();
+    if (warnings.Any())
+        db.Warnings.RemoveRange(warnings);
+
+    // 5. حذف العقوبات (Punishments)
+    var punishments = await db.Punishments
+        .Where(p => p.StudentId == student.Id)
+        .ToListAsync();
+    if (punishments.Any())
+        db.Punishments.RemoveRange(punishments);
+
+    // 6. حذف التسجيلات في الأنشطة (ActivityRegistrations)
+    var activityRegistrations = await db.ActivityRegistrations
+        .Where(r => r.StudentId == student.Id)
+        .ToListAsync();
+    if (activityRegistrations.Any())
+        db.ActivityRegistrations.RemoveRange(activityRegistrations);
+
+    // 7. ✅ حذف إعارات الكتب (BookLoans) - باستخدام StudentId مباشرة
+    var bookLoans = await db.BookLoans
+        .Where(l => l.StudentId == student.Id)
+        .ToListAsync();
+    if (bookLoans.Any())
+        db.BookLoans.RemoveRange(bookLoans);
+
+    // 8. ✅ حذف حجوزات الكتب (BookReservations) - باستخدام StudentId مباشرة
+    var bookReservations = await db.BookReservations
+        .Where(r => r.StudentId == student.Id)
+        .ToListAsync();
+    if (bookReservations.Any())
+        db.BookReservations.RemoveRange(bookReservations);
+
+    // 9. ✅ حذف طلبات الاستعارة (BookLoanRequests) - باستخدام StudentId مباشرة
+    var loanRequests = await db.BookLoanRequests
+        .Where(r => r.StudentId == student.Id)
+        .ToListAsync();
+    if (loanRequests.Any())
+        db.BookLoanRequests.RemoveRange(loanRequests);
+
+    // 10. حذف سجل تطور الصفوف (StudentGradeHistory)
+    var gradeHistory = await db.StudentGradeHistory
+        .Where(h => h.StudentId == student.Id)
+        .ToListAsync();
+    if (gradeHistory.Any())
+        db.StudentGradeHistory.RemoveRange(gradeHistory);
+
+    // 11. حذف الشكاوى (Complaints) - إذا كان الطالب هو صاحب الشكوى
+    var complaints = await db.Complaints
+        .Where(c => c.FromUserId == student.Id && c.FromUserType == UserType.Student)
+        .ToListAsync();
+    if (complaints.Any())
+        db.Complaints.RemoveRange(complaints);
+
+    // 12. حذف الإشعارات (Notifications) - الخاصة بالطالب
+    var notifications = await db.Notifications
+        .Where(n => n.UserId == student.Id && n.UserType == UserType.Student)
+        .ToListAsync();
+    if (notifications.Any())
+        db.Notifications.RemoveRange(notifications);
+
+    // 13. حذف استدعاءات ولي الأمر (GuardianSummons)
+    var summons = await db.GuardianSummons
+        .Where(s => s.StudentId == student.Id)
+        .ToListAsync();
+    if (summons.Any())
+        db.GuardianSummons.RemoveRange(summons);
+
+    // ❌ إزالة LibraryMember - لم نعد نستخدمه
+    // var libraryMember = await db.LibraryMembers
+    //     .FirstOrDefaultAsync(m => m.StudentId == student.Id);
+    // if (libraryMember is not null) { ... }
+
+    // 14. أخيراً حذف الطالب نفسه
+    db.Students.Remove(student);
+    await db.SaveChangesAsync();
+
+    return Ok(new
     {
-        var student = await db.Students
-            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
-                                      s.LocalStudentNumber == localStudentNumber);
-
-        if (student is null)
-            return NotFound(new { message = $"لا يوجد طالب برقم {localStudentNumber} في هذه المدرسة" });
-
-        var marks = await db.Marks
-            .Where(m => m.StudentId == student.Id)
-            .ToListAsync();
-        if (marks.Any())
-            db.Marks.RemoveRange(marks);
-
-        var reportCards = await db.ReportCards
-            .Where(r => r.StudentId == student.Id)
-            .ToListAsync();
-        if (reportCards.Any())
-            db.ReportCards.RemoveRange(reportCards);
-
-        var attendances = await db.StudentAttendances
-            .Where(a => a.StudentId == student.Id)
-            .ToListAsync();
-        if (attendances.Any())
-            db.StudentAttendances.RemoveRange(attendances);
-
-        var warnings = await db.Warnings
-            .Where(w => w.StudentId == student.Id)
-            .ToListAsync();
-        if (warnings.Any())
-            db.Warnings.RemoveRange(warnings);
-
-        var punishments = await db.Punishments
-            .Where(p => p.StudentId == student.Id)
-            .ToListAsync();
-        if (punishments.Any())
-            db.Punishments.RemoveRange(punishments);
-
-        var activityRegistrations = await db.ActivityRegistrations
-            .Where(r => r.StudentId == student.Id)
-            .ToListAsync();
-        if (activityRegistrations.Any())
-            db.ActivityRegistrations.RemoveRange(activityRegistrations);
-
-        var libraryMember = await db.LibraryMembers
-            .FirstOrDefaultAsync(m => m.StudentId == student.Id);
-        if (libraryMember is not null)
+        success = true,
+        message = "تم حذف الطالب وجميع البيانات المرتبطة بنجاح",
+        data = new
         {
-            var bookLoans = await db.BookLoans
-                .Where(l => l.MemberId == libraryMember.Id)
-                .ToListAsync();
-            if (bookLoans.Any())
-                db.BookLoans.RemoveRange(bookLoans);
-
-            var bookReservations = await db.BookReservations
-                .Where(r => r.MemberId == libraryMember.Id)
-                .ToListAsync();
-            if (bookReservations.Any())
-                db.BookReservations.RemoveRange(bookReservations);
-
-            db.LibraryMembers.Remove(libraryMember);
-        }
-        
-        db.Students.Remove(student);
-        await db.SaveChangesAsync();
-
-        return Ok(new
-        {
-            success = true,
-            message = "تم حذف الطالب وجميع البيانات المرتبطة بنجاح",
             localStudentNumber = localStudentNumber,
-            studentName = student.Name
-        });
-    }
+            studentName = student.Name,
+            studentId = student.Id
+        }
+    });
+}
 
     // ============================================
     // حضور الموظفين - باستخدام Local IDs

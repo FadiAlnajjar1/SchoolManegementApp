@@ -361,10 +361,6 @@ namespace SchoolManagement.Api.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("Isbn")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
                     b.Property<int>("LocalBookNumber")
                         .HasColumnType("int");
 
@@ -407,29 +403,72 @@ namespace SchoolManagement.Api.Migrations
                     b.Property<int>("LocalLoanNumber")
                         .HasColumnType("int");
 
-                    b.Property<int>("MemberId")
-                        .HasColumnType("int");
-
                     b.Property<DateOnly?>("ReturnDate")
                         .HasColumnType("date");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<int>("StudentId")
+                        .HasColumnType("int");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("MemberId");
 
                     b.HasIndex("BookId", "LocalLoanNumber")
                         .IsUnique()
                         .HasDatabaseName("IX_BookLoan_BookId_LocalLoanNumber");
 
-                    b.HasIndex("BookId", "MemberId", "Status")
-                        .HasDatabaseName("IX_BookLoan_BookId_MemberId_Status");
+                    b.HasIndex("StudentId", "Status")
+                        .HasDatabaseName("IX_BookLoan_StudentId_Status");
 
                     b.ToTable("BookLoans");
+                });
+
+            modelBuilder.Entity("SchoolManagement.Api.Models.BookLoanRequest", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("BookId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("LocalRequestNumber")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("ProcessedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("RejectionReason")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime>("RequestDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<int>("StudentId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BookId", "LocalRequestNumber")
+                        .IsUnique()
+                        .HasDatabaseName("IX_BookLoanRequest_BookId_LocalRequestNumber");
+
+                    b.HasIndex("StudentId", "Status")
+                        .HasDatabaseName("IX_BookLoanRequest_StudentId_Status");
+
+                    b.HasIndex("BookId", "StudentId", "Status")
+                        .HasDatabaseName("IX_BookLoanRequest_BookId_StudentId_Status");
+
+                    b.ToTable("BookLoanRequests");
                 });
 
             modelBuilder.Entity("SchoolManagement.Api.Models.BookReservation", b =>
@@ -449,20 +488,22 @@ namespace SchoolManagement.Api.Migrations
                     b.Property<DateOnly>("Date")
                         .HasColumnType("date");
 
-                    b.Property<int>("MemberId")
+                    b.Property<int>("Status")
                         .HasColumnType("int");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
+                    b.Property<int>("StudentId")
+                        .HasColumnType("int");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("MemberId");
+                    b.HasIndex("StudentId");
 
-                    b.HasIndex("BookId", "MemberId", "Status")
-                        .HasDatabaseName("IX_BookReservation_BookId_MemberId_Status");
+                    b.HasIndex("BookId", "StudentId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_BookReservation_BookId_StudentId_Unique");
+
+                    b.HasIndex("BookId", "StudentId", "Status")
+                        .HasDatabaseName("IX_BookReservation_BookId_StudentId_Status");
 
                     b.ToTable("BookReservations");
                 });
@@ -651,44 +692,6 @@ namespace SchoolManagement.Api.Migrations
                     b.ToTable("Leaves");
                 });
 
-            modelBuilder.Entity("SchoolManagement.Api.Models.LibraryMember", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("LocalMemberNumber")
-                        .HasColumnType("int");
-
-                    b.Property<int>("SchoolId")
-                        .HasColumnType("int");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
-                    b.Property<int>("StudentId")
-                        .HasColumnType("int");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("StudentId")
-                        .IsUnique()
-                        .HasDatabaseName("IX_LibraryMember_StudentId");
-
-                    b.HasIndex("SchoolId", "LocalMemberNumber")
-                        .IsUnique()
-                        .HasDatabaseName("IX_LibraryMember_SchoolId_LocalMemberNumber");
-
-                    b.ToTable("LibraryMembers");
-                });
-
             modelBuilder.Entity("SchoolManagement.Api.Models.Mark", b =>
                 {
                     b.Property<int>("Id")
@@ -701,19 +704,19 @@ namespace SchoolManagement.Api.Migrations
                         .HasColumnType("int");
 
                     b.Property<decimal>("FinalExam")
-                        .HasColumnType("decimal(6,2)");
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal>("Homework")
-                        .HasColumnType("decimal(6,2)");
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal>("Oral")
-                        .HasColumnType("decimal(6,2)");
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal>("Quiz1")
-                        .HasColumnType("decimal(6,2)");
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal>("Quiz2")
-                        .HasColumnType("decimal(6,2)");
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<int>("SchoolId")
                         .HasColumnType("int");
@@ -728,7 +731,7 @@ namespace SchoolManagement.Api.Migrations
                         .HasColumnType("int");
 
                     b.Property<decimal>("Total")
-                        .HasColumnType("decimal(6,2)");
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("datetime2");
@@ -752,22 +755,22 @@ namespace SchoolManagement.Api.Migrations
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
                     b.Property<decimal>("MaxFinalExam")
-                        .HasColumnType("decimal(6,2)");
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal>("MaxHomework")
-                        .HasColumnType("decimal(6,2)");
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal>("MaxOral")
-                        .HasColumnType("decimal(6,2)");
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal>("MaxQuiz1")
-                        .HasColumnType("decimal(6,2)");
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal>("MaxQuiz2")
-                        .HasColumnType("decimal(6,2)");
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal>("PassPercent")
-                        .HasColumnType("decimal(6,2)");
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<int>("SchoolId")
                         .HasColumnType("int");
@@ -1012,7 +1015,7 @@ namespace SchoolManagement.Api.Migrations
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
                     b.Property<decimal>("Average")
-                        .HasColumnType("decimal(6,2)");
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
@@ -1062,7 +1065,7 @@ namespace SchoolManagement.Api.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal>("Total")
-                        .HasColumnType("decimal(6,2)");
+                        .HasColumnType("decimal(18,2)");
 
                     b.HasKey("Id");
 
@@ -1282,7 +1285,7 @@ namespace SchoolManagement.Api.Migrations
                         .HasColumnType("int");
 
                     b.Property<decimal>("Average")
-                        .HasColumnType("decimal(6,2)");
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
@@ -1607,15 +1610,34 @@ namespace SchoolManagement.Api.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("SchoolManagement.Api.Models.LibraryMember", "Member")
+                    b.HasOne("SchoolManagement.Api.Models.Student", "Student")
                         .WithMany()
-                        .HasForeignKey("MemberId")
+                        .HasForeignKey("StudentId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.Navigation("Book");
 
-                    b.Navigation("Member");
+                    b.Navigation("Student");
+                });
+
+            modelBuilder.Entity("SchoolManagement.Api.Models.BookLoanRequest", b =>
+                {
+                    b.HasOne("SchoolManagement.Api.Models.Book", "Book")
+                        .WithMany()
+                        .HasForeignKey("BookId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("SchoolManagement.Api.Models.Student", "Student")
+                        .WithMany()
+                        .HasForeignKey("StudentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Book");
+
+                    b.Navigation("Student");
                 });
 
             modelBuilder.Entity("SchoolManagement.Api.Models.BookReservation", b =>
@@ -1626,15 +1648,15 @@ namespace SchoolManagement.Api.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("SchoolManagement.Api.Models.LibraryMember", "Member")
+                    b.HasOne("SchoolManagement.Api.Models.Student", "Student")
                         .WithMany()
-                        .HasForeignKey("MemberId")
+                        .HasForeignKey("StudentId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.Navigation("Book");
 
-                    b.Navigation("Member");
+                    b.Navigation("Student");
                 });
 
             modelBuilder.Entity("SchoolManagement.Api.Models.Complaint", b =>
@@ -1698,17 +1720,6 @@ namespace SchoolManagement.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("Employee");
-                });
-
-            modelBuilder.Entity("SchoolManagement.Api.Models.LibraryMember", b =>
-                {
-                    b.HasOne("SchoolManagement.Api.Models.Student", "Student")
-                        .WithMany()
-                        .HasForeignKey("StudentId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Student");
                 });
 
             modelBuilder.Entity("SchoolManagement.Api.Models.Mark", b =>

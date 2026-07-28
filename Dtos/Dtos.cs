@@ -32,6 +32,7 @@ public class LoanLocalRequest
 // Dtos/ReservationLocalRequest.cs
 public class ReservationLocalRequest
 {
+    public int LocalStudentNumber { get; set; }
     public int LocalBookNumber { get; set; }      // ✅ Local ID للكتاب
     public int LocalMemberNumber { get; set; }    // ✅ Local ID للعضو
 }

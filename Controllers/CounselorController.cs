@@ -978,9 +978,9 @@ public async Task<IActionResult> GetStudentFullProfile(int localStudentNumber)
         })
         .ToListAsync();
 
-    // ✅ الحضور
-     var attendance = await db.StudentAttendances
-        .Where(a => a.StudentId == student.Id && !a.IsDeleted)  // ✅ أضف هذا الشرط
+    // ✅ الحضور (تجاهل المحذوف)
+    var attendance = await db.StudentAttendances
+        .Where(a => a.StudentId == student.Id && !a.IsDeleted)
         .OrderByDescending(a => a.Date)
         .Take(200)
         .Select(a => new
@@ -994,48 +994,51 @@ public async Task<IActionResult> GetStudentFullProfile(int localStudentNumber)
         })
         .ToListAsync();
 
-    // ✅ المكتبة
-    var member = await db.LibraryMembers
-        .Where(m => m.StudentId == student.Id)
-        .Select(m => new
+    // ❌ إزالة LibraryMember
+    // var member = await db.LibraryMembers
+    //     .Where(m => m.StudentId == student.Id)
+    //     .Select(m => new
+    //     {
+    //         m.Id,
+    //         LocalMemberNumber = m.LocalMemberNumber,
+    //         Status = m.Status.ToString(),
+    //         m.CreatedAt
+    //     })
+    //     .FirstOrDefaultAsync();
+
+    // var memberId = member?.Id ?? 0;
+
+    // ✅ جلب استعارات الطالب (بدون عضوية)
+    var loans = await db.BookLoans
+        .Where(l => l.StudentId == student.Id)
+        .OrderByDescending(l => l.LoanDate)
+        .Select(l => new
         {
-            m.Id,
-            LocalMemberNumber = m.LocalMemberNumber,
-            Status = m.Status.ToString(),
-            m.CreatedAt
+            l.Id,
+            LocalLoanNumber = l.LocalLoanNumber,
+            BookTitle = l.Book != null ? l.Book.Title : null,
+            LocalBookNumber = l.Book != null ? l.Book.LocalBookNumber : 0,
+            l.LoanDate,
+            l.DueDate,
+            l.ReturnDate,
+            Status = l.Status.ToString(),
+            IsOverdue = l.DueDate < DateOnly.FromDateTime(DateTime.Today) && l.Status == LoanStatus.Active
         })
-        .FirstOrDefaultAsync();
+        .ToListAsync();
 
-    var memberId = member?.Id ?? 0;
-
-    // var loans = memberId > 0 ? await db.BookLoans
-    //     .Where(l => l.MemberId == memberId)
-    //     .OrderByDescending(l => l.LoanDate)
-    //     .Select(l => new
-    //     {
-    //         l.Id,
-    //         LocalLoanNumber = l.LocalLoanNumber,
-    //         BookTitle = l.Book != null ? l.Book.Title : null,
-    //         LocalBookNumber = l.Book != null ? l.Book.LocalBookNumber : 0,
-    //         l.LoanDate,
-    //         l.DueDate,
-    //         l.ReturnDate,
-    //         Status = l.Status.ToString()
-    //     })
-    //     .ToListAsync() : new List<object>();
-
-    // var reservations = memberId > 0 ? await db.BookReservations
-    //     .Where(r => r.MemberId == memberId)
-    //     .OrderByDescending(r => r.Date)
-    //     .Select(r => new
-    //     {
-    //         r.Id,
-    //         BookTitle = r.Book != null ? r.Book.Title : null,
-    //         LocalBookNumber = r.Book != null ? r.Book.LocalBookNumber : 0,
-    //         r.Date,
-    //         Status = r.Status.ToString()
-    //     })
-    //     .ToListAsync() : new List<object>();
+    // ✅ جلب حجوزات الطالب (بدون عضوية)
+    var reservations = await db.BookReservations
+        .Where(r => r.StudentId == student.Id)
+        .OrderByDescending(r => r.Date)
+        .Select(r => new
+        {
+            r.Id,
+            BookTitle = r.Book != null ? r.Book.Title : null,
+            LocalBookNumber = r.Book != null ? r.Book.LocalBookNumber : 0,
+            r.Date,
+            Status = r.Status.ToString()
+        })
+        .ToListAsync();
 
     // ✅ الأنشطة
     var activities = await db.ActivityRegistrations
@@ -1143,7 +1146,10 @@ public async Task<IActionResult> GetStudentFullProfile(int localStudentNumber)
         TotalPunishments = punishments.Count,
         TotalComplaints = complaints.Count,
         TotalNotifications = notifications.Count,
-        
+        TotalLoans = loans.Count,
+        TotalReservations = reservations.Count,
+        ActiveLoans = loans.Count(l => l.Status == "Active"),
+        PendingReservations = reservations.Count(r => r.Status == "Pending")
     };
 
     // ✅ الرد النهائي
@@ -1162,8 +1168,12 @@ public async Task<IActionResult> GetStudentFullProfile(int localStudentNumber)
             Attendance = attendance,
             Library = new
             {
-                Member = member,
-                
+                Loans = loans,
+                Reservations = reservations,
+                TotalLoans = loans.Count,
+                ActiveLoans = loans.Count(l => l.Status == "Active"),
+                TotalReservations = reservations.Count,
+                PendingReservations = reservations.Count(r => r.Status == "Pending")
             },
             Activities = activities,
             Warnings = warnings,

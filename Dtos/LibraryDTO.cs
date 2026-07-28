@@ -47,10 +47,21 @@ public class BookRequest
     public string Title { get; set; } = string.Empty;
     
     public string? Author { get; set; }
-    
-    public string? Isbn { get; set; }
+
     
     [Required]
     [Range(1, int.MaxValue)]
     public int Copies { get; set; }
+}
+public class LoanRequestLocalRequest
+{
+    [Required]
+    public int LocalBookNumber { get; set; }
+    
+    [Required]
+    public int LocalStudentNumber { get; set; }
+}
+public class RejectLoanRequest
+{
+    public string? Reason { get; set; }
 }

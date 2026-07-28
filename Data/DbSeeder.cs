@@ -576,33 +576,19 @@ public static class DbSeeder
         db.Students.AddRange(students);
         await db.SaveChangesAsync();
 
-        // ============================================
-        // 19. إنشاء أعضاء المكتبة
-        // ============================================
-        db.LibraryMembers.AddRange(
-            new LibraryMember { StudentId = students[0].Id, SchoolId = school1.Id, LocalMemberNumber = 1, Status = MemberStatus.Active },
-            new LibraryMember { StudentId = students[1].Id, SchoolId = school1.Id, LocalMemberNumber = 2, Status = MemberStatus.Active },
-            new LibraryMember { StudentId = students[2].Id, SchoolId = school1.Id, LocalMemberNumber = 3, Status = MemberStatus.Active },
-            new LibraryMember { StudentId = students[3].Id, SchoolId = school1.Id, LocalMemberNumber = 4, Status = MemberStatus.Active },
-            new LibraryMember { StudentId = students[4].Id, SchoolId = school1.Id, LocalMemberNumber = 5, Status = MemberStatus.Active },
-            new LibraryMember { StudentId = students[5].Id, SchoolId = school2.Id, LocalMemberNumber = 1, Status = MemberStatus.Active },
-            new LibraryMember { StudentId = students[6].Id, SchoolId = school2.Id, LocalMemberNumber = 2, Status = MemberStatus.Active },
-            new LibraryMember { StudentId = students[7].Id, SchoolId = school2.Id, LocalMemberNumber = 3, Status = MemberStatus.Active }
-        );
-        await db.SaveChangesAsync();
 
         // ============================================
         // 20. إنشاء الكتب
         // ============================================
         db.Books.AddRange(
-            new Book { SchoolId = school1.Id, LocalBookNumber = 1, Title = "الأيام", Author = "طه حسين", Isbn = "978-977-416-001-1", Copies = 5, AvailableCopies = 5 },
-            new Book { SchoolId = school1.Id, LocalBookNumber = 2, Title = "النحو الواضح", Author = "علي الجارم", Isbn = "978-977-416-002-8", Copies = 3, AvailableCopies = 3 },
-            new Book { SchoolId = school1.Id, LocalBookNumber = 3, Title = "فيزياء الصف العاشر", Author = "أحمد زكي", Isbn = "978-977-416-003-5", Copies = 4, AvailableCopies = 4 },
-            new Book { SchoolId = school1.Id, LocalBookNumber = 4, Title = "الكيمياء", Author = "مصطفى فهمي", Isbn = "978-977-416-004-2", Copies = 3, AvailableCopies = 3 },
-            new Book { SchoolId = school1.Id, LocalBookNumber = 5, Title = "الأحياء", Author = "عبد الوهاب", Isbn = "978-977-416-005-9", Copies = 3, AvailableCopies = 3 },
-            new Book { SchoolId = school2.Id, LocalBookNumber = 1, Title = "English Grammar", Author = "John Smith", Isbn = "978-977-416-006-6", Copies = 3, AvailableCopies = 3 },
-            new Book { SchoolId = school2.Id, LocalBookNumber = 2, Title = "Science Basics", Author = "Peter Jones", Isbn = "978-977-416-007-3", Copies = 2, AvailableCopies = 2 },
-            new Book { SchoolId = school2.Id, LocalBookNumber = 3, Title = "Mathematics", Author = "Robert Brown", Isbn = "978-977-416-008-0", Copies = 2, AvailableCopies = 2 }
+            new Book { SchoolId = school1.Id, LocalBookNumber = 1, Title = "الأيام", Author = "طه حسين", Copies = 5, AvailableCopies = 5 },
+            new Book { SchoolId = school1.Id, LocalBookNumber = 2, Title = "النحو الواضح", Author = "علي الجارم", Copies = 3, AvailableCopies = 3 },
+            new Book { SchoolId = school1.Id, LocalBookNumber = 3, Title = "فيزياء الصف العاشر", Author = "أحمد زكي",  Copies = 4, AvailableCopies = 4 },
+            new Book { SchoolId = school1.Id, LocalBookNumber = 4, Title = "الكيمياء", Author = "مصطفى فهمي",  Copies = 3, AvailableCopies = 3 },
+            new Book { SchoolId = school1.Id, LocalBookNumber = 5, Title = "الأحياء", Author = "عبد الوهاب",  Copies = 3, AvailableCopies = 3 },
+            new Book { SchoolId = school2.Id, LocalBookNumber = 1, Title = "English Grammar", Author = "John Smith",  Copies = 3, AvailableCopies = 3 },
+            new Book { SchoolId = school2.Id, LocalBookNumber = 2, Title = "Science Basics", Author = "Peter Jones",  Copies = 2, AvailableCopies = 2 },
+            new Book { SchoolId = school2.Id, LocalBookNumber = 3, Title = "Mathematics", Author = "Robert Brown",  Copies = 2, AvailableCopies = 2 }
         );
         await db.SaveChangesAsync();
 

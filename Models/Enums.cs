@@ -1,3 +1,6 @@
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
 namespace SchoolManagement.Api.Models;
 
 
@@ -19,6 +22,47 @@ public enum QuizType
     Homework = 3,
     Oral = 4,
     FinalExam = 5
+}
+public enum LoanRequestStatus
+{
+    Pending = 1,      // قيد الانتظار
+    Approved = 2,     // تمت الموافقة
+    Rejected = 3,     // مرفوض
+    Cancelled = 4     // ملغي
+}
+public class BookLoanRequest
+{
+    [Key]
+    public int Id { get; set; }
+    
+    [Required]
+    public int BookId { get; set; }
+    
+    [Required]
+    public int StudentId { get; set; }
+    
+    [Required]
+    public int LocalRequestNumber { get; set; }
+    
+    [Required]
+    public DateTime RequestDate { get; set; }
+    
+    [Required]
+    public LoanRequestStatus Status { get; set; }
+    
+    public string? RejectionReason { get; set; }
+    
+    public DateTime? ProcessedAt { get; set; }
+    
+    [Required]
+    public DateTime CreatedAt { get; set; }
+    
+    // Navigation Properties
+    [ForeignKey(nameof(BookId))]
+    public virtual Book? Book { get; set; }
+    
+    [ForeignKey(nameof(StudentId))]
+    public virtual Student? Student { get; set; }
 }
 public enum EmployeeRole
 {
@@ -86,16 +130,16 @@ public enum ActivityType
 
 public enum LoanStatus
 {
-    Active,
-    Returned,
-    Overdue,
+    Active=1,
+    Returned=2,
+    Overdue=3,
 }
 
 public enum ReservationStatus
 {
-    Pending,
-    Fulfilled,
-    Cancelled,
+    Pending = 1,
+    Fulfilled=2,
+    Cancelled=3,
 }
 
 public enum RegistrationStatus

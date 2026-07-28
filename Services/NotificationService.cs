@@ -53,6 +53,45 @@ public class NotificationService(AppDbContext db, ILogger<NotificationService> l
     }
 
     // ============================================
+    // إرسال إشعار لأمين المكتبة (✅ جديد)
+    // ============================================
+
+    public async Task SendToLibrarianAsync(int schoolId, string title, string body, string type = "library")
+    {
+        try
+        {
+            // البحث عن جميع أمناء المكتبة في المدرسة
+            var librarians = await db.EmployeeSchools
+                .Include(es => es.Employee)
+                .Where(es => es.SchoolId == schoolId && 
+                            es.Role == EmployeeRole.Librarian && 
+                            es.IsActive &&
+                            es.Employee != null &&
+                            !es.Employee.IsDismissed)
+                .Select(es => es.Employee!)
+                .ToListAsync();
+
+            if (librarians is null || !librarians.Any())
+            {
+                logger.LogWarning("No librarians found for school {SchoolId}", schoolId);
+                return;
+            }
+
+            // إرسال إشعار لكل أمين مكتبة
+            foreach (var librarian in librarians)
+            {
+                await SendAsync(librarian.Id, UserType.Employee, title, body, type);
+            }
+
+            logger.LogInformation("Notification sent to {Count} librarians in school {SchoolId}", librarians.Count, schoolId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error sending notification to librarians in school {SchoolId}", schoolId);
+        }
+    }
+
+    // ============================================
     // إرسال إشعار لمدير المدرسة
     // ============================================
 
@@ -72,6 +111,50 @@ public class NotificationService(AppDbContext db, ILogger<NotificationService> l
         foreach (var manager in managers)
         {
             await SendAsync(manager.Id, UserType.Employee, title, body, type);
+        }
+    }
+
+    // ============================================
+    // إرسال إشعار للموجه (Counselor)
+    // ============================================
+
+    public async Task SendToCounselorsInSchoolAsync(int schoolId, string title, string body, string type = "general")
+    {
+        var counselors = await db.EmployeeSchools
+            .Include(es => es.Employee)
+            .Where(es => es.SchoolId == schoolId && 
+                         es.Role == EmployeeRole.Counselor && 
+                         es.IsActive &&
+                         es.Employee != null &&
+                         !es.Employee.IsDismissed)
+            .Select(es => es.Employee!)
+            .ToListAsync();
+
+        foreach (var counselor in counselors)
+        {
+            await SendAsync(counselor.Id, UserType.Employee, title, body, type);
+        }
+    }
+
+    // ============================================
+    // إرسال إشعار لجميع المعلمين في مدرسة
+    // ============================================
+
+    public async Task SendToTeachersInSchoolAsync(int schoolId, string title, string body, string type = "general")
+    {
+        var teachers = await db.EmployeeSchools
+            .Include(es => es.Employee)
+            .Where(es => es.SchoolId == schoolId && 
+                         es.Role == EmployeeRole.Teacher && 
+                         es.IsActive &&
+                         es.Employee != null &&
+                         !es.Employee.IsDismissed)
+            .Select(es => es.Employee!)
+            .ToListAsync();
+
+        foreach (var teacher in teachers)
+        {
+            await SendAsync(teacher.Id, UserType.Employee, title, body, type);
         }
     }
 
@@ -129,7 +212,7 @@ public class NotificationService(AppDbContext db, ILogger<NotificationService> l
     }
 
     // ============================================
-    // إرسال إشعار للموجه (Counselor)
+    // إرسال إشعار للموجه (Counselor) - فردي
     // ============================================
 
     public async Task SendToCounselorAsync(int counselorId, string title, string body, string type = "general")
@@ -146,6 +229,28 @@ public class NotificationService(AppDbContext db, ILogger<NotificationService> l
         foreach (var userId in userIds)
         {
             await SendAsync(userId, userType, title, body, type);
+        }
+    }
+
+    // ============================================
+    // إرسال إشعار لدور معين في المدرسة
+    // ============================================
+
+    public async Task SendToRoleInSchoolAsync(int schoolId, EmployeeRole role, string title, string body, string type = "general")
+    {
+        var employees = await db.EmployeeSchools
+            .Include(es => es.Employee)
+            .Where(es => es.SchoolId == schoolId && 
+                         es.Role == role && 
+                         es.IsActive &&
+                         es.Employee != null &&
+                         !es.Employee.IsDismissed)
+            .Select(es => es.Employee!)
+            .ToListAsync();
+
+        foreach (var employee in employees)
+        {
+            await SendAsync(employee.Id, UserType.Employee, title, body, type);
         }
     }
 
@@ -212,6 +317,38 @@ public class NotificationService(AppDbContext db, ILogger<NotificationService> l
     }
 
     // ============================================
+    // جلب إشعارات أمين المكتبة
+    // ============================================
+
+    public async Task<List<Models.Notification>> GetLibrarianNotificationsAsync(int schoolId, int take = 50)
+    {
+        try
+        {
+            // البحث عن جميع أمناء المكتبة في المدرسة
+            var librarianIds = await db.EmployeeSchools
+                .Where(es => es.SchoolId == schoolId && 
+                            es.Role == EmployeeRole.Librarian && 
+                            es.IsActive)
+                .Select(es => es.EmployeeId)
+                .ToListAsync();
+
+            if (librarianIds is null || !librarianIds.Any())
+                return new List<Models.Notification>();
+
+            return await db.Notifications
+                .Where(n => librarianIds.Contains(n.UserId) && n.UserType == UserType.Employee)
+                .OrderByDescending(n => n.CreatedAt)
+                .Take(take)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error getting librarian notifications for school {SchoolId}", schoolId);
+            return new List<Models.Notification>();
+        }
+    }
+
+    // ============================================
     // تحديث حالة القراءة
     // ============================================
 
@@ -268,5 +405,15 @@ public class NotificationService(AppDbContext db, ILogger<NotificationService> l
             db.Notifications.RemoveRange(notifications);
             await db.SaveChangesAsync();
         }
+    }
+
+    // ============================================
+    // جلب عدد الإشعارات غير المقروءة
+    // ============================================
+
+    public async Task<int> GetUnreadCountAsync(int userId, UserType userType)
+    {
+        return await db.Notifications
+            .CountAsync(n => n.UserId == userId && n.UserType == userType && !n.IsRead);
     }
 }
