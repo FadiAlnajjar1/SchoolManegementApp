@@ -335,9 +335,11 @@ public class TeacherController(
     }
 
     [HttpPost("marks/quiz")]
-    public async Task<IActionResult> AddQuizMark(
-        [FromBody] QuizMarkRequest request,
-        [FromQuery] int? schoolId = null)
+public async Task<IActionResult> AddQuizMark(
+    [FromBody] QuizMarkRequest request,
+    [FromQuery] int? schoolId = null)
+{
+    try
     {
         // ✅ التحقق من SchoolId
         var (isValid, effectiveSchoolId, errorMessage) = await GetEffectiveSchoolIdAsync(schoolId);
@@ -348,6 +350,7 @@ public class TeacherController(
         if (blocked is not null) 
             return StatusCode(403, new { message = blocked });
 
+        // ✅ البحث عن المادة
         var subject = await db.Subjects
             .FirstOrDefaultAsync(s => s.SchoolId == effectiveSchoolId &&
                                       s.LocalSubjectId == request.LocalSubjectId);
@@ -355,12 +358,14 @@ public class TeacherController(
         if (subject is null)
             return BadRequest(new { success = false, message = $"لا توجد مادة برقم {request.LocalSubjectId}" });
 
+        // ✅ التحقق من أن المعلم يدرس هذه المادة
         var teacherSubject = await db.TeacherGrades
             .FirstOrDefaultAsync(t => t.TeacherId == TeacherId && t.SubjectId == subject.Id);
         
         if (teacherSubject is null) 
             return BadRequest(new { success = false, message = "هذه المادة ليست من موادك" });
 
+        // ✅ البحث عن الطالب
         var student = await db.Students
             .FirstOrDefaultAsync(s => s.SchoolId == effectiveSchoolId &&
                                       s.LocalStudentNumber == request.LocalStudentNumber);
@@ -368,9 +373,36 @@ public class TeacherController(
         if (student is null) 
             return BadRequest(new { success = false, message = $"لا يوجد طالب برقم {request.LocalStudentNumber}" });
 
+        // ✅ التحقق من صحة نوع الاختبار
         if (!Enum.IsDefined(typeof(QuizType), request.QuizTypeId))
             return BadRequest(new { success = false, message = "نوع المذاكرة غير صحيح" });
 
+        // ✅ التحقق من أن العلامة لا تتجاوز العلامة الكاملة
+        if (request.Score > request.MaxScore)
+        {
+            return BadRequest(new { 
+                success = false, 
+                message = $"العلامة المدخلة ({request.Score}) تتجاوز العلامة الكاملة ({request.MaxScore})" 
+            });
+        }
+
+        if (request.Score < 0)
+        {
+            return BadRequest(new { 
+                success = false, 
+                message = "العلامة لا يمكن أن تكون سالبة" 
+            });
+        }
+
+        if (request.MaxScore <= 0)
+        {
+            return BadRequest(new { 
+                success = false, 
+                message = "العلامة الكاملة يجب أن تكون أكبر من صفر" 
+            });
+        }
+
+        // ✅ البحث عن العلامة الموجودة
         var existingMark = await db.Marks
             .FirstOrDefaultAsync(m => m.StudentId == student.Id && 
                                       m.SubjectId == subject.Id && 
@@ -378,40 +410,54 @@ public class TeacherController(
 
         if (existingMark is null)
         {
+            // ✅ إنشاء علامة جديدة
             existingMark = new Mark
             {
                 StudentId = student.Id,
                 SubjectId = subject.Id,
                 Semester = request.Semester,
                 EnteredById = TeacherId,
-                SchoolId = effectiveSchoolId
+                SchoolId = effectiveSchoolId,
+                CreatedAt = DateTime.UtcNow
             };
             db.Marks.Add(existingMark);
         }
 
+        // ✅ تحديث العلامة المكتسبة والعلامة الكاملة
         switch (request.QuizTypeId)
         {
-            case 1:
+            case 1: // Quiz1
                 existingMark.Quiz1 = request.Score;
+                existingMark.MaxQuiz1 = request.MaxScore;
                 break;
-            case 2:
+            case 2: // Quiz2
                 existingMark.Quiz2 = request.Score;
+                existingMark.MaxQuiz2 = request.MaxScore;
                 break;
-            case 3:
+            case 3: // Homework
                 existingMark.Homework = request.Score;
+                existingMark.MaxHomework = request.MaxScore;
                 break;
-            case 4:
+            case 4: // Oral
                 existingMark.Oral = request.Score;
+                existingMark.MaxOral = request.MaxScore;
                 break;
-            case 5:
+            case 5: // FinalExam
                 existingMark.FinalExam = request.Score;
+                existingMark.MaxFinalExam = request.MaxScore;
                 break;
             default:
                 return BadRequest(new { success = false, message = "نوع المذاكرة غير صحيح" });
         }
 
+        // ✅ حساب المجموع الكلي (مجموع جميع العلامات المكتسبة)
         existingMark.Total = existingMark.Oral + existingMark.Quiz1 + existingMark.Quiz2 + 
                              existingMark.Homework + existingMark.FinalExam;
+
+        // ✅ حفظ الملاحظات
+        if (!string.IsNullOrEmpty(request.Notes))
+            existingMark.Notes = request.Notes;
+
         existingMark.UpdatedAt = DateTime.UtcNow;
 
         await db.SaveChangesAsync();
@@ -433,203 +479,318 @@ public class TeacherController(
                 QuizTypeId = request.QuizTypeId,
                 QuizTypeName = quizTypeName,
                 Score = request.Score,
+                MaxScore = request.MaxScore,
                 existingMark.Oral,
                 existingMark.Quiz1,
                 existingMark.Quiz2,
                 existingMark.Homework,
                 existingMark.FinalExam,
+                existingMark.MaxOral,
+                existingMark.MaxQuiz1,
+                existingMark.MaxQuiz2,
+                existingMark.MaxHomework,
+                existingMark.MaxFinalExam,
                 Total = existingMark.Total,
-                UpdatedAt = existingMark.UpdatedAt
+                existingMark.Notes,
+                existingMark.CreatedAt,
+                existingMark.UpdatedAt
             }
         });
     }
+    catch (Exception ex)
+    {
+        // ✅ التعامل مع الأخطاء
+        return StatusCode(500, new
+        {
+            success = false,
+            message = "حدث خطأ أثناء تسجيل العلامة",
+            error = ex.Message
+        });
+    }
+}
 
     [HttpPut("marks/quiz")]
-    public async Task<IActionResult> UpdateQuizMark(
-        [FromBody] QuizMarkUpdateLocalRequest request,
-        [FromQuery] int? schoolId = null)
+public async Task<IActionResult> UpdateQuizMark(
+    [FromBody] QuizMarkUpdateLocalRequest request,
+    [FromQuery] int? schoolId = null)
+{
+    // ✅ التحقق من SchoolId
+    var (isValid, effectiveSchoolId, errorMessage) = await GetEffectiveSchoolIdAsync(schoolId);
+    if (!isValid)
+        return BadRequest(new { success = false, message = errorMessage });
+
+    var blocked = await rules.ValidateSecondPeriodAttendanceTakenAsync(TeacherId);
+    if (blocked is not null) 
+        return StatusCode(403, new { message = blocked });
+
+    var student = await db.Students
+        .FirstOrDefaultAsync(s => s.SchoolId == effectiveSchoolId &&
+                                  s.LocalStudentNumber == request.LocalStudentNumber);
+    
+    if (student is null)
+        return NotFound(new { success = false, message = $"لا يوجد طالب برقم {request.LocalStudentNumber}" });
+
+    var subject = await db.Subjects
+        .FirstOrDefaultAsync(s => s.SchoolId == effectiveSchoolId &&
+                                  s.LocalSubjectId == request.LocalSubjectId);
+
+    if (subject is null)
+        return NotFound(new { success = false, message = $"لا توجد مادة برقم {request.LocalSubjectId}" });
+
+    var teacherSubject = await db.TeacherGrades
+        .AnyAsync(t => t.TeacherId == TeacherId && t.SubjectId == subject.Id);
+
+    if (!teacherSubject)
+        return BadRequest(new { success = false, message = "هذه المادة ليست من موادك" });
+
+    if (!Enum.IsDefined(typeof(QuizType), request.QuizTypeId))
+        return BadRequest(new { success = false, message = "نوع المذاكرة غير صحيح" });
+
+    var mark = await db.Marks
+        .FirstOrDefaultAsync(m => m.StudentId == student.Id && 
+                                  m.SubjectId == subject.Id && 
+                                  m.Semester == request.Semester);
+
+    if (mark is null)
+        return NotFound(new { 
+            success = false, 
+            message = $"لا توجد علامة للطالب {request.LocalStudentNumber} في مادة {request.LocalSubjectId} للفصل {request.Semester}" 
+        });
+
+    // ✅ التحقق من صحة العلامات
+    if (request.Score.HasValue && request.MaxScore.HasValue)
     {
-        // ✅ التحقق من SchoolId
-        var (isValid, effectiveSchoolId, errorMessage) = await GetEffectiveSchoolIdAsync(schoolId);
-        if (!isValid)
-            return BadRequest(new { success = false, message = errorMessage });
-
-        var blocked = await rules.ValidateSecondPeriodAttendanceTakenAsync(TeacherId);
-        if (blocked is not null) 
-            return StatusCode(403, new { message = blocked });
-
-        var student = await db.Students
-            .FirstOrDefaultAsync(s => s.SchoolId == effectiveSchoolId &&
-                                      s.LocalStudentNumber == request.LocalStudentNumber);
-        
-        if (student is null)
-            return NotFound(new { success = false, message = $"لا يوجد طالب برقم {request.LocalStudentNumber}" });
-
-        var subject = await db.Subjects
-            .FirstOrDefaultAsync(s => s.SchoolId == effectiveSchoolId &&
-                                      s.LocalSubjectId == request.LocalSubjectId);
-
-        if (subject is null)
-            return NotFound(new { success = false, message = $"لا توجد مادة برقم {request.LocalSubjectId}" });
-
-        var teacherSubject = await db.TeacherGrades
-            .AnyAsync(t => t.TeacherId == TeacherId && t.SubjectId == subject.Id);
-
-        if (!teacherSubject)
-            return BadRequest(new { success = false, message = "هذه المادة ليست من موادك" });
-
-        if (!Enum.IsDefined(typeof(QuizType), request.QuizTypeId))
-            return BadRequest(new { success = false, message = "نوع المذاكرة غير صحيح" });
-
-        var mark = await db.Marks
-            .FirstOrDefaultAsync(m => m.StudentId == student.Id && 
-                                      m.SubjectId == subject.Id && 
-                                      m.Semester == request.Semester);
-
-        if (mark is null)
-            return NotFound(new { 
+        if (request.Score.Value > request.MaxScore.Value)
+        {
+            return BadRequest(new { 
                 success = false, 
-                message = $"لا توجد علامة للطالب {request.LocalStudentNumber} في مادة {request.LocalSubjectId} للفصل {request.Semester}" 
+                message = $"العلامة المدخلة ({request.Score.Value}) تتجاوز العلامة الكاملة ({request.MaxScore.Value})" 
             });
-
-        switch (request.QuizTypeId)
-        {
-            case 1:
-                if (request.Score.HasValue) mark.Quiz1 = request.Score.Value;
-                break;
-            case 2:
-                if (request.Score.HasValue) mark.Quiz2 = request.Score.Value;
-                break;
-            case 3:
-                if (request.Score.HasValue) mark.Homework = request.Score.Value;
-                break;
-            case 4:
-                if (request.Score.HasValue) mark.Oral = request.Score.Value;
-                break;
-            case 5:
-                if (request.Score.HasValue) mark.FinalExam = request.Score.Value;
-                break;
-            default:
-                return BadRequest(new { success = false, message = "نوع المذاكرة غير صحيح" });
         }
-
-        mark.Total = mark.Oral + mark.Quiz1 + mark.Quiz2 + mark.Homework + mark.FinalExam;
-        mark.UpdatedAt = DateTime.UtcNow;
-
-        await db.SaveChangesAsync();
-
-        var quizTypeName = ((QuizType)request.QuizTypeId).ToString();
-
-        await notifier.SendAsync(student.Id, UserType.Student,
-            "تحديث علامة المذاكرة",
-            $"تم تحديث {quizTypeName} في {subject.Name}: {mark.Total}",
-            "quiz_mark_update");
-
-        return Ok(new
+        
+        if (request.Score.Value < 0)
         {
-            success = true,
-            message = "تم تحديث علامة المذاكرة بنجاح",
-            data = new
+            return BadRequest(new { 
+                success = false, 
+                message = "العلامة لا يمكن أن تكون سالبة" 
+            });
+        }
+    }
+
+    // ✅ تحديث العلامة المكتسبة والعلامة الكاملة
+    switch (request.QuizTypeId)
+    {
+        case 1: // Quiz1
+            if (request.Score.HasValue) 
+                mark.Quiz1 = request.Score.Value;
+            if (request.MaxScore.HasValue) 
+                mark.MaxQuiz1 = request.MaxScore.Value;
+            break;
+        case 2: // Quiz2
+            if (request.Score.HasValue) 
+                mark.Quiz2 = request.Score.Value;
+            if (request.MaxScore.HasValue) 
+                mark.MaxQuiz2 = request.MaxScore.Value;
+            break;
+        case 3: // Homework
+            if (request.Score.HasValue) 
+                mark.Homework = request.Score.Value;
+            if (request.MaxScore.HasValue) 
+                mark.MaxHomework = request.MaxScore.Value;
+            break;
+        case 4: // Oral
+            if (request.Score.HasValue) 
+                mark.Oral = request.Score.Value;
+            if (request.MaxScore.HasValue) 
+                mark.MaxOral = request.MaxScore.Value;
+            break;
+        case 5: // FinalExam
+            if (request.Score.HasValue) 
+                mark.FinalExam = request.Score.Value;
+            if (request.MaxScore.HasValue) 
+                mark.MaxFinalExam = request.MaxScore.Value;
+            break;
+        default:
+            return BadRequest(new { success = false, message = "نوع المذاكرة غير صحيح" });
+    }
+
+    // ✅ تحديث الملاحظات إذا وجدت
+    if (!string.IsNullOrEmpty(request.Notes))
+        mark.Notes = request.Notes;
+
+    // ✅ إعادة حساب المجموع الكلي
+    mark.Total = mark.Oral + mark.Quiz1 + mark.Quiz2 + mark.Homework + mark.FinalExam;
+    mark.UpdatedAt = DateTime.UtcNow;
+
+    await db.SaveChangesAsync();
+
+    var quizTypeName = ((QuizType)request.QuizTypeId).ToString();
+
+    await notifier.SendAsync(student.Id, UserType.Student,
+        "تحديث علامة المذاكرة",
+        $"تم تحديث {quizTypeName} في {subject.Name}: {mark.Total}",
+        "quiz_mark_update");
+
+    return Ok(new
+    {
+        success = true,
+        message = "تم تحديث علامة المذاكرة بنجاح",
+        data = new
+        {
+            mark.Id,
+            LocalStudentNumber = student.LocalStudentNumber,
+            StudentName = student.Name,
+            LocalSubjectId = subject.LocalSubjectId,
+            SubjectName = subject.Name,
+            Semester = mark.Semester,
+            QuizTypeId = request.QuizTypeId,
+            QuizTypeName = quizTypeName,
+            
+            // ✅ العلامات المكتسبة
+            mark.Oral,
+            mark.Quiz1,
+            mark.Quiz2,
+            mark.Homework,
+            mark.FinalExam,
+            
+            // ✅ العلامات الكاملة
+            mark.MaxOral,
+            mark.MaxQuiz1,
+            mark.MaxQuiz2,
+            mark.MaxHomework,
+            mark.MaxFinalExam,
+            
+            // ✅ المجموع والملاحظات
+            Total = mark.Total,
+            mark.Notes,
+            mark.UpdatedAt
+        }
+    });
+}
+
+    [HttpDelete("marks/quiz")]
+public async Task<IActionResult> DeleteQuizMark(
+    [FromQuery] int localStudentNumber,
+    [FromQuery] int localSubjectId,
+    [FromQuery] int semester,
+    [FromQuery] int quizTypeId,
+    [FromQuery] int? schoolId = null)
+{
+    // ✅ التحقق من SchoolId
+    var (isValid, effectiveSchoolId, errorMessage) = await GetEffectiveSchoolIdAsync(schoolId);
+    if (!isValid)
+        return BadRequest(new { success = false, message = errorMessage });
+
+    var blocked = await rules.ValidateSecondPeriodAttendanceTakenAsync(TeacherId);
+    if (blocked is not null) 
+        return StatusCode(403, new { message = blocked });
+
+    var student = await db.Students
+        .FirstOrDefaultAsync(s => s.SchoolId == effectiveSchoolId &&
+                                  s.LocalStudentNumber == localStudentNumber);
+    
+    if (student is null)
+        return NotFound(new { success = false, message = $"لا يوجد طالب برقم {localStudentNumber}" });
+
+    var subject = await db.Subjects
+        .FirstOrDefaultAsync(s => s.SchoolId == effectiveSchoolId &&
+                                  s.LocalSubjectId == localSubjectId);
+
+    if (subject is null)
+        return NotFound(new { success = false, message = $"لا توجد مادة برقم {localSubjectId}" });
+
+    var teacherSubject = await db.TeacherGrades
+        .AnyAsync(t => t.TeacherId == TeacherId && t.SubjectId == subject.Id);
+
+    if (!teacherSubject)
+        return BadRequest(new { success = false, message = "هذه المادة ليست من موادك" });
+
+    if (!Enum.IsDefined(typeof(QuizType), quizTypeId))
+        return BadRequest(new { success = false, message = "نوع المذاكرة غير صحيح" });
+
+    var mark = await db.Marks
+        .FirstOrDefaultAsync(m => m.StudentId == student.Id && 
+                                  m.SubjectId == subject.Id && 
+                                  m.Semester == semester);
+
+    if (mark is null)
+        return NotFound(new { 
+            success = false, 
+            message = $"لا توجد علامة للطالب {localStudentNumber} في مادة {localSubjectId} للفصل {semester}" 
+        });
+
+    var subjectName = subject.Name;
+    var studentId = student.Id;
+    var quizTypeName = ((QuizType)quizTypeId).ToString();
+
+    // ✅ حذف العلامة المحددة فقط (تعيينها إلى 0)
+    switch (quizTypeId)
+    {
+        case 1: // Quiz1
+            mark.Quiz1 = 0;
+            mark.MaxQuiz1 = 0;
+            break;
+        case 2: // Quiz2
+            mark.Quiz2 = 0;
+            mark.MaxQuiz2 = 0;
+            break;
+        case 3: // Homework
+            mark.Homework = 0;
+            mark.MaxHomework = 0;
+            break;
+        case 4: // Oral
+            mark.Oral = 0;
+            mark.MaxOral = 0;
+            break;
+        case 5: // FinalExam
+            mark.FinalExam = 0;
+            mark.MaxFinalExam = 0;
+            break;
+        default:
+            return BadRequest(new { success = false, message = "نوع المذاكرة غير صحيح" });
+    }
+
+    // ✅ إعادة حساب المجموع الكلي
+    mark.Total = mark.Oral + mark.Quiz1 + mark.Quiz2 + 
+                 mark.Homework + mark.FinalExam;
+    
+    mark.UpdatedAt = DateTime.UtcNow;
+
+    await db.SaveChangesAsync();
+
+    // ✅ إرسال إشعار
+    await notifier.SendAsync(studentId, UserType.Student,
+        "حذف علامة المذاكرة",
+        $"تم حذف {quizTypeName} في مادة {subjectName} (الفصل {semester})",
+        "quiz_mark_delete");
+
+    return Ok(new
+    {
+        success = true,
+        message = $"تم حذف {quizTypeName} بنجاح",
+        data = new
+        {
+            LocalStudentNumber = localStudentNumber,
+            StudentName = student.Name,
+            LocalSubjectId = localSubjectId,
+            SubjectName = subjectName,
+            QuizTypeId = quizTypeId,
+            QuizTypeName = quizTypeName,
+            Semester = semester,
+            // ✅ العلامات المتبقية
+            RemainingMarks = new
             {
-                mark.Id,
-                LocalStudentNumber = student.LocalStudentNumber,
-                StudentName = student.Name,
-                LocalSubjectId = subject.LocalSubjectId,
-                SubjectName = subject.Name,
-                Semester = mark.Semester,
-                QuizTypeId = request.QuizTypeId,
-                QuizTypeName = quizTypeName,
                 mark.Oral,
                 mark.Quiz1,
                 mark.Quiz2,
                 mark.Homework,
                 mark.FinalExam,
-                Total = mark.Total,
-                UpdatedAt = mark.UpdatedAt
-            }
-        });
-    }
-
-    [HttpDelete("marks/quiz")]
-    public async Task<IActionResult> DeleteQuizMark(
-        [FromQuery] int localStudentNumber,
-        [FromQuery] int localSubjectId,
-        [FromQuery] int semester,
-        [FromQuery] int quizTypeId,
-        [FromQuery] int? schoolId = null)
-    {
-        // ✅ التحقق من SchoolId
-        var (isValid, effectiveSchoolId, errorMessage) = await GetEffectiveSchoolIdAsync(schoolId);
-        if (!isValid)
-            return BadRequest(new { success = false, message = errorMessage });
-
-        var blocked = await rules.ValidateSecondPeriodAttendanceTakenAsync(TeacherId);
-        if (blocked is not null) 
-            return StatusCode(403, new { message = blocked });
-
-        var student = await db.Students
-            .FirstOrDefaultAsync(s => s.SchoolId == effectiveSchoolId &&
-                                      s.LocalStudentNumber == localStudentNumber);
-        
-        if (student is null)
-            return NotFound(new { success = false, message = $"لا يوجد طالب برقم {localStudentNumber}" });
-
-        var subject = await db.Subjects
-            .FirstOrDefaultAsync(s => s.SchoolId == effectiveSchoolId &&
-                                      s.LocalSubjectId == localSubjectId);
-
-        if (subject is null)
-            return NotFound(new { success = false, message = $"لا توجد مادة برقم {localSubjectId}" });
-
-        var teacherSubject = await db.TeacherGrades
-            .AnyAsync(t => t.TeacherId == TeacherId && t.SubjectId == subject.Id);
-
-        if (!teacherSubject)
-            return BadRequest(new { success = false, message = "هذه المادة ليست من موادك" });
-
-        if (!Enum.IsDefined(typeof(QuizType), quizTypeId))
-            return BadRequest(new { success = false, message = "نوع المذاكرة غير صحيح" });
-
-        var mark = await db.Marks
-            .FirstOrDefaultAsync(m => m.StudentId == student.Id && 
-                                      m.SubjectId == subject.Id && 
-                                      m.Semester == semester);
-
-        if (mark is null)
-            return NotFound(new { 
-                success = false, 
-                message = $"لا توجد علامة للطالب {localStudentNumber} في مادة {localSubjectId} للفصل {semester}" 
-            });
-
-        var subjectName = subject.Name;
-        var studentId = student.Id;
-        var quizTypeName = ((QuizType)quizTypeId).ToString();
-
-        db.Marks.Remove(mark);
-        await db.SaveChangesAsync();
-
-        await notifier.SendAsync(studentId, UserType.Student,
-            "حذف علامة المذاكرة",
-            $"تم حذف {quizTypeName} في مادة {subjectName} (الفصل {semester})",
-            "quiz_mark_delete");
-
-        return Ok(new
-        {
-            success = true,
-            message = "تم حذف علامة المذاكرة بنجاح",
-            data = new
-            {
-                LocalStudentNumber = localStudentNumber,
-                StudentName = student.Name,
-                LocalSubjectId = localSubjectId,
-                SubjectName = subjectName,
-                QuizTypeId = quizTypeId,
-                QuizTypeName = quizTypeName,
-                Semester = semester,
-                DeletedAt = DateTime.UtcNow
-            }
-        });
-    }
+                mark.Total
+            },
+            DeletedAt = DateTime.UtcNow
+        }
+    });
+}
 
     [HttpGet("schedule-image")]
     public async Task<IActionResult> GetScheduleImage([FromQuery] int? schoolId = null)
@@ -905,7 +1066,7 @@ public async Task<IActionResult> GetFullProfile()
 [HttpGet("students/{localStudentNumber:int}/full-profile")]
 public async Task<IActionResult> GetStudentFullProfile(
     [FromRoute] int localStudentNumber,
-    [FromQuery] int? schoolId = null)  // ✅ إضافة schoolId كـ Query Parameter
+    [FromQuery] int? schoolId = null)
 {
     // ✅ بناء الاستعلام الأساسي
     var query = db.Students
@@ -916,7 +1077,6 @@ public async Task<IActionResult> GetStudentFullProfile(
     // ✅ إذا تم إرسال schoolId، فلترة الطلاب حسب المدرسة
     if (schoolId.HasValue && schoolId.Value > 0)
     {
-        // ✅ التحقق من صحة schoolId للمعلم
         var hasAccess = await db.EmployeeSchools
             .AnyAsync(es => es.EmployeeId == TeacherId && 
                            es.SchoolId == schoolId.Value && 
@@ -955,42 +1115,125 @@ public async Task<IActionResult> GetStudentFullProfile(
             message = "أنت لا تدرس هذا الطالب" 
         });
 
-    // ✅ جلب العلامات (مع فلترة حسب المدرسة إذا أرسل schoolId)
+    // ✅ جلب العلامات مع جميع التفاصيل (بما في ذلك Max...)
     var marksQuery = db.Marks
+        .Include(m => m.Subject)
         .Where(m => m.StudentId == student.Id)
         .AsQueryable();
 
-    // إذا تم إرسال schoolId، تأكد من أن العلامات لنفس المدرسة
     if (schoolId.HasValue && schoolId.Value > 0)
     {
         marksQuery = marksQuery.Where(m => m.SchoolId == schoolId.Value);
     }
 
-    var marks = await marksQuery
-        .Select(m => new
-        {
-            m.Semester,
-            m.Total,
-            LocalSubjectId = m.Subject != null ? m.Subject.LocalSubjectId : 0,
-            SubjectName = m.Subject != null ? m.Subject.Name : null
-        })
-        .ToListAsync();
+    // ✅ جلب العلامات مع القيم المخزنة في قاعدة البيانات
+    // ✅ جلب العلامات مع جميع التفاصيل
+var marks = await marksQuery
+    .Select(m => new
+    {
+        m.Id,
+        m.Semester,
+        m.Oral,
+        m.Quiz1,
+        m.Quiz2,
+        m.Homework,
+        m.FinalExam,
+        m.Total,
+        m.MaxOral,
+        m.MaxQuiz1,
+        m.MaxQuiz2,
+        m.MaxHomework,
+        m.MaxFinalExam,
+        m.Notes,
+        m.UpdatedAt,
+        LocalSubjectId = m.Subject != null ? m.Subject.LocalSubjectId : 0,
+        SubjectName = m.Subject != null ? m.Subject.Name : null,
+    })
+    .ToListAsync();
 
-    // ✅ حساب المتوسطات
-    var semester1Marks = marks.Where(m => m.Semester == 1).ToList();
-    var semester2Marks = marks.Where(m => m.Semester == 2).ToList();
+// ✅ فصل العلامات حسب الفصل الدراسي (كل علامة على حدة)
+var semester1Marks = marks
+    .Where(m => m.Semester == 1)
+    .Select(m => new
+    {
+        LocalSubjectId = m.LocalSubjectId,
+        SubjectName = m.SubjectName,
+        Oral = m.Oral,
+        Quiz1 = m.Quiz1,
+        Quiz2 = m.Quiz2,
+        Homework = m.Homework,
+        FinalExam = m.FinalExam,
+        Total = m.Total,  // ✅ كل علامة على حدة
+        MaxOral = m.MaxOral,
+        MaxQuiz1 = m.MaxQuiz1,
+        MaxQuiz2 = m.MaxQuiz2,
+        MaxHomework = m.MaxHomework,
+        MaxFinalExam = m.MaxFinalExam,
+        OralPercent = m.MaxOral > 0 ? Math.Round((decimal)m.Oral / (decimal)m.MaxOral * 100, 2) : 0,
+        Quiz1Percent = m.MaxQuiz1 > 0 ? Math.Round((decimal)m.Quiz1 / (decimal)m.MaxQuiz1 * 100, 2) : 0,
+        Quiz2Percent = m.MaxQuiz2 > 0 ? Math.Round((decimal)m.Quiz2 / (decimal)m.MaxQuiz2 * 100, 2) : 0,
+        HomeworkPercent = m.MaxHomework > 0 ? Math.Round((decimal)m.Homework / (decimal)m.MaxHomework * 100, 2) : 0,
+        FinalExamPercent = m.MaxFinalExam > 0 ? Math.Round((decimal)m.FinalExam / (decimal)m.MaxFinalExam * 100, 2) : 0,
+        TotalPercent = (m.MaxOral + m.MaxQuiz1 + m.MaxQuiz2 + m.MaxHomework + m.MaxFinalExam) > 0 ?
+            Math.Round((decimal)m.Total / (decimal)(m.MaxOral + m.MaxQuiz1 + m.MaxQuiz2 + m.MaxHomework + m.MaxFinalExam) * 100, 2) : 0,
+        Grade = m.Total >= 90 ? "ممتاز" :
+               m.Total >= 80 ? "جيد جداً" :
+               m.Total >= 70 ? "جيد" :
+               m.Total >= 60 ? "مقبول" : "ضعيف",
+        m.Notes,
+        m.UpdatedAt
+    })
+    .OrderBy(m => m.LocalSubjectId)
+    .ToList();
 
-    var semester1Average = semester1Marks.Any() 
-        ? Math.Round(semester1Marks.Average(m => m.Total), 2) 
-        : 0;
+// ✅ نفس الشيء للفصل الثاني
+var semester2Marks = marks
+    .Where(m => m.Semester == 2)
+    .Select(m => new
+    {
+        LocalSubjectId = m.LocalSubjectId,
+        SubjectName = m.SubjectName,
+        Oral = m.Oral,
+        Quiz1 = m.Quiz1,
+        Quiz2 = m.Quiz2,
+        Homework = m.Homework,
+        FinalExam = m.FinalExam,
+        Total = m.Total,  // ✅ كل علامة على حدة
+        MaxOral = m.MaxOral,
+        MaxQuiz1 = m.MaxQuiz1,
+        MaxQuiz2 = m.MaxQuiz2,
+        MaxHomework = m.MaxHomework,
+        MaxFinalExam = m.MaxFinalExam,
+        OralPercent = m.MaxOral > 0 ? Math.Round((decimal)m.Oral / (decimal)m.MaxOral * 100, 2) : 0,
+        Quiz1Percent = m.MaxQuiz1 > 0 ? Math.Round((decimal)m.Quiz1 / (decimal)m.MaxQuiz1 * 100, 2) : 0,
+        Quiz2Percent = m.MaxQuiz2 > 0 ? Math.Round((decimal)m.Quiz2 / (decimal)m.MaxQuiz2 * 100, 2) : 0,
+        HomeworkPercent = m.MaxHomework > 0 ? Math.Round((decimal)m.Homework / (decimal)m.MaxHomework * 100, 2) : 0,
+        FinalExamPercent = m.MaxFinalExam > 0 ? Math.Round((decimal)m.FinalExam / (decimal)m.MaxFinalExam * 100, 2) : 0,
+        TotalPercent = (m.MaxOral + m.MaxQuiz1 + m.MaxQuiz2 + m.MaxHomework + m.MaxFinalExam) > 0 ?
+            Math.Round((decimal)m.Total / (decimal)(m.MaxOral + m.MaxQuiz1 + m.MaxQuiz2 + m.MaxHomework + m.MaxFinalExam) * 100, 2) : 0,
+        Grade = m.Total >= 90 ? "ممتاز" :
+               m.Total >= 80 ? "جيد جداً" :
+               m.Total >= 70 ? "جيد" :
+               m.Total >= 60 ? "مقبول" : "ضعيف",
+        m.Notes,
+        m.UpdatedAt
+    })
+    .OrderBy(m => m.LocalSubjectId)
+    .ToList();
 
-    var semester2Average = semester2Marks.Any() 
-        ? Math.Round(semester2Marks.Average(m => m.Total), 2) 
-        : 0;
+// ✅ حساب المتوسطات (متوسط العلامات وليس مجموعها)
+var semester1Average = semester1Marks.Any() 
+    ? Math.Round(semester1Marks.Average(m => m.Total), 2)  // ✅ متوسط العلامات
+    : 0;
 
-    var finalAverage = marks.Any() 
-        ? Math.Round(marks.Average(m => m.Total), 2) 
-        : 0;
+var semester2Average = semester2Marks.Any() 
+    ? Math.Round(semester2Marks.Average(m => m.Total), 2)  // ✅ متوسط العلامات
+    : 0;
+
+// ✅ المتوسط النهائي (متوسط جميع العلامات)
+var finalAverage = marks.Any() 
+    ? Math.Round(marks.Average(m => m.Total), 2)  // ✅ متوسط جميع العلامات
+    : 0;
 
     // ✅ الرد النهائي
     return Ok(new
@@ -1000,37 +1243,42 @@ public async Task<IActionResult> GetStudentFullProfile(
         data = new
         {
             // ✅ المعلومات الأساسية
-            student.Id,
-            student.Name,
-            student.Email,
-            LocalStudentNumber = student.LocalStudentNumber,
-            student.GuardianName,
-            student.GuardianPhone,
-            student.BirthDate,
-            student.Address,
-            student.DismissalWarning,
-            student.CreatedAt,
-
-            // ✅ العلامات المفصلة
-            Semester1Marks = semester1Marks.Select(m => new
+            Student = new
             {
-                LocalSubjectId = m.LocalSubjectId,
-                SubjectName = m.SubjectName,
-                Total = m.Total
-            }).ToList(),
+                student.Id,
+                student.Name,
+                student.Email,
+                LocalStudentNumber = student.LocalStudentNumber,
+                student.GuardianName,
+                student.GuardianPhone,
+                student.BirthDate,
+                student.Address,
+                student.DismissalWarning,
+                student.CreatedAt,
+                
+                SectionName = student.Section?.Name,
+                LocalSectionNumber = student.Section?.LocalSectionNumber ?? 0,
+                GradeName = student.Section?.Grade?.Name,
+                LocalGradeNumber = student.Section?.Grade?.LocalGradeNumber ?? 0,
+                AcademicYear = student.Section?.Grade?.AcademicYear ?? 0
+            },
 
-            Semester2Marks = semester2Marks.Select(m => new
-            {
-                LocalSubjectId = m.LocalSubjectId,
-                SubjectName = m.SubjectName,
-                Total = m.Total
-            }).ToList(),
-
-            // ✅ المتوسطات
-            Semester1Average = semester1Average,
-            Semester2Average = semester2Average,
-            FinalAverage = finalAverage
+           Semester1Marks = semester1Marks,
+        Semester2Marks = semester2Marks,
+        
+        // ✅ المتوسطات الصحيحة
+        Averages = new
+        {
+            Semester1 = semester1Average,    // ✅ متوسط الفصل الأول
+            Semester2 = semester2Average,    // ✅ متوسط الفصل الثاني
+            Final = finalAverage,            // ✅ المتوسط النهائي
+            SubjectsCount = marks.Count,
+            PassedSubjects = marks.Count(m => m.Total >= 60),
+            FailedSubjects = marks.Count(m => m.Total < 60),
+            SuccessRate = marks.Any() ? 
+                Math.Round((double)marks.Count(m => m.Total >= 60) / marks.Count * 100, 2) : 0
         }
-    });
+    }
+});
 }
 }

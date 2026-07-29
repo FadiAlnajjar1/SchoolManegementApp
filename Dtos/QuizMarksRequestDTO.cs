@@ -8,7 +8,7 @@ public class QuizMarkRequest
     public int LocalSubjectId { get; set; }
     public int Semester { get; set; }
     public int QuizTypeId { get; set; }  // ✅ 1=Quiz1, 2=Quiz2, 3=Homework, 4=Oral, 5=FinalExam
-    public int Score { get; set; }
-    public int MaxScore { get; set; }
+    public decimal Score { get; set; }
+    public decimal MaxScore { get; set; }
     public string? Notes { get; set; }
 }

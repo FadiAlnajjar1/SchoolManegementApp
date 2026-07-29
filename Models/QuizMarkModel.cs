@@ -9,8 +9,8 @@ public class QuizMark
     public int Semester { get; set; }
     public int QuizTypeId { get; set; }  // ✅ 1=Quiz1, 2=Quiz2, 3=Homework, 4=Oral, 5=FinalExam
     public int QuizNumber { get; set; }  // ✅ نفس QuizTypeId (للتوافق)
-    public int Score { get; set; }       // ✅ int بدلاً من double
-    public int MaxScore { get; set; }    // ✅ int بدلاً من double
+    public decimal Score { get; set; }       // ✅ int بدلاً من double
+    public decimal MaxScore { get; set; }    // ✅ int بدلاً من double
     public DateOnly Date { get; set; }
     public string Notes { get; set; } = "";
     public int? EnteredById { get; set; }  // ✅ nullable
