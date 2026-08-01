@@ -140,6 +140,8 @@ public enum ReservationStatus
     Pending = 1,
     Fulfilled=2,
     Cancelled=3,
+    Approved=4,
+    Rejected=5
 }
 
 public enum RegistrationStatus

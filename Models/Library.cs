@@ -11,6 +11,7 @@ public class Book
     public string Title { get; set; } = "";
     public string Author { get; set; } = "";
     public int Copies { get; set; }
+    public int ReservedCopies { get; set; }
     public int AvailableCopies { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
@@ -50,4 +51,8 @@ public class BookReservation
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     [ForeignKey(nameof(StudentId))]
     public virtual Student? Student { get; set; }
+    public DateOnly ExpiryDate { get; set; }
+    public string? RejectionReason { get; set; }
+    public DateTime UpdatedAt { get; internal set; }
+
 }

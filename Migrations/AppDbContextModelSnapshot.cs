@@ -364,6 +364,9 @@ namespace SchoolManagement.Api.Migrations
                     b.Property<int>("LocalBookNumber")
                         .HasColumnType("int");
 
+                    b.Property<int>("ReservedCopies")
+                        .HasColumnType("int");
+
                     b.Property<int>("SchoolId")
                         .HasColumnType("int");
 
@@ -488,11 +491,20 @@ namespace SchoolManagement.Api.Migrations
                     b.Property<DateOnly>("Date")
                         .HasColumnType("date");
 
+                    b.Property<DateOnly>("ExpiryDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("RejectionReason")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<int>("Status")
                         .HasColumnType("int");
 
                     b.Property<int>("StudentId")
                         .HasColumnType("int");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2");
 
                     b.HasKey("Id");
 

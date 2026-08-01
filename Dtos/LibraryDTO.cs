@@ -49,8 +49,7 @@ public class BookRequest
     public string? Author { get; set; }
 
     
-    [Required]
-    [Range(1, int.MaxValue)]
+
     public int Copies { get; set; }
 }
 public class LoanRequestLocalRequest

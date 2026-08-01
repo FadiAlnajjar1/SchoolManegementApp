@@ -1115,11 +1115,31 @@ public async Task<IActionResult> GetStudentFullProfile(
             message = "أنت لا تدرس هذا الطالب" 
         });
 
-    // ✅ جلب العلامات مع جميع التفاصيل (بما في ذلك Max...)
+    // ✅ جلب المواد التي يدرسها المعلم للطالب
+    var teacherSubjects = await db.TeacherGrades
+        .Where(tg => tg.TeacherId == TeacherId && 
+                     tg.SectionId == student.SectionId)
+        .Select(tg => new
+        {
+            tg.SubjectId,
+            LocalSubjectId = tg.Subject != null ? tg.Subject.LocalSubjectId : 0,
+            SubjectName = tg.Subject != null ? tg.Subject.Name : null
+        })
+        .Distinct()
+        .ToListAsync();
+
+    var teacherSubjectIds = teacherSubjects.Select(s => s.SubjectId).ToList();
+
+    if (!teacherSubjectIds.Any())
+        return BadRequest(new { 
+            success = false, 
+            message = "لا توجد مواد مسجلة لهذا المعلم في هذه الشعبة" 
+        });
+
+    // ✅ جلب العلامات للمواد التي يدرسها المعلم فقط
     var marksQuery = db.Marks
-        .Include(m => m.Subject)
-        .Where(m => m.StudentId == student.Id)
-        .AsQueryable();
+        .Where(m => m.StudentId == student.Id && 
+                    teacherSubjectIds.Contains(m.SubjectId));
 
     if (schoolId.HasValue && schoolId.Value > 0)
     {
@@ -1127,113 +1147,121 @@ public async Task<IActionResult> GetStudentFullProfile(
     }
 
     // ✅ جلب العلامات مع القيم المخزنة في قاعدة البيانات
-    // ✅ جلب العلامات مع جميع التفاصيل
-var marks = await marksQuery
-    .Select(m => new
-    {
-        m.Id,
-        m.Semester,
-        m.Oral,
-        m.Quiz1,
-        m.Quiz2,
-        m.Homework,
-        m.FinalExam,
-        m.Total,
-        m.MaxOral,
-        m.MaxQuiz1,
-        m.MaxQuiz2,
-        m.MaxHomework,
-        m.MaxFinalExam,
-        m.Notes,
-        m.UpdatedAt,
-        LocalSubjectId = m.Subject != null ? m.Subject.LocalSubjectId : 0,
-        SubjectName = m.Subject != null ? m.Subject.Name : null,
-    })
-    .ToListAsync();
+    var marks = await marksQuery
+        .Select(m => new
+        {
+            m.Id,
+            m.Semester,
+            m.Oral,
+            m.Quiz1,
+            m.Quiz2,
+            m.Homework,
+            m.FinalExam,
+            m.Total,
+            m.MaxOral,
+            m.MaxQuiz1,
+            m.MaxQuiz2,
+            m.MaxHomework,
+            m.MaxFinalExam,
+            m.Notes,
+            m.UpdatedAt,
+            LocalSubjectId = m.Subject != null ? m.Subject.LocalSubjectId : 0,
+            SubjectName = m.Subject != null ? m.Subject.Name : null,
+        })
+        .ToListAsync();
 
-// ✅ فصل العلامات حسب الفصل الدراسي (كل علامة على حدة)
-var semester1Marks = marks
-    .Where(m => m.Semester == 1)
-    .Select(m => new
-    {
-        LocalSubjectId = m.LocalSubjectId,
-        SubjectName = m.SubjectName,
-        Oral = m.Oral,
-        Quiz1 = m.Quiz1,
-        Quiz2 = m.Quiz2,
-        Homework = m.Homework,
-        FinalExam = m.FinalExam,
-        Total = m.Total,  // ✅ كل علامة على حدة
-        MaxOral = m.MaxOral,
-        MaxQuiz1 = m.MaxQuiz1,
-        MaxQuiz2 = m.MaxQuiz2,
-        MaxHomework = m.MaxHomework,
-        MaxFinalExam = m.MaxFinalExam,
-        OralPercent = m.MaxOral > 0 ? Math.Round((decimal)m.Oral / (decimal)m.MaxOral * 100, 2) : 0,
-        Quiz1Percent = m.MaxQuiz1 > 0 ? Math.Round((decimal)m.Quiz1 / (decimal)m.MaxQuiz1 * 100, 2) : 0,
-        Quiz2Percent = m.MaxQuiz2 > 0 ? Math.Round((decimal)m.Quiz2 / (decimal)m.MaxQuiz2 * 100, 2) : 0,
-        HomeworkPercent = m.MaxHomework > 0 ? Math.Round((decimal)m.Homework / (decimal)m.MaxHomework * 100, 2) : 0,
-        FinalExamPercent = m.MaxFinalExam > 0 ? Math.Round((decimal)m.FinalExam / (decimal)m.MaxFinalExam * 100, 2) : 0,
-        TotalPercent = (m.MaxOral + m.MaxQuiz1 + m.MaxQuiz2 + m.MaxHomework + m.MaxFinalExam) > 0 ?
-            Math.Round((decimal)m.Total / (decimal)(m.MaxOral + m.MaxQuiz1 + m.MaxQuiz2 + m.MaxHomework + m.MaxFinalExam) * 100, 2) : 0,
-        Grade = m.Total >= 90 ? "ممتاز" :
-               m.Total >= 80 ? "جيد جداً" :
-               m.Total >= 70 ? "جيد" :
-               m.Total >= 60 ? "مقبول" : "ضعيف",
-        m.Notes,
-        m.UpdatedAt
-    })
-    .OrderBy(m => m.LocalSubjectId)
-    .ToList();
+    // ✅ جلب قائمة المواد مع حالة وجود علامات (يتم حسابه في الذاكرة وليس في SQL)
+    var teacherSubjectsWithMarks = teacherSubjects
+        .Select(s => new
+        {
+            s.LocalSubjectId,
+            s.SubjectName,
+            HasMarks = marks.Any(m => m.LocalSubjectId == s.LocalSubjectId)
+        })
+        .ToList();
 
-// ✅ نفس الشيء للفصل الثاني
-var semester2Marks = marks
-    .Where(m => m.Semester == 2)
-    .Select(m => new
-    {
-        LocalSubjectId = m.LocalSubjectId,
-        SubjectName = m.SubjectName,
-        Oral = m.Oral,
-        Quiz1 = m.Quiz1,
-        Quiz2 = m.Quiz2,
-        Homework = m.Homework,
-        FinalExam = m.FinalExam,
-        Total = m.Total,  // ✅ كل علامة على حدة
-        MaxOral = m.MaxOral,
-        MaxQuiz1 = m.MaxQuiz1,
-        MaxQuiz2 = m.MaxQuiz2,
-        MaxHomework = m.MaxHomework,
-        MaxFinalExam = m.MaxFinalExam,
-        OralPercent = m.MaxOral > 0 ? Math.Round((decimal)m.Oral / (decimal)m.MaxOral * 100, 2) : 0,
-        Quiz1Percent = m.MaxQuiz1 > 0 ? Math.Round((decimal)m.Quiz1 / (decimal)m.MaxQuiz1 * 100, 2) : 0,
-        Quiz2Percent = m.MaxQuiz2 > 0 ? Math.Round((decimal)m.Quiz2 / (decimal)m.MaxQuiz2 * 100, 2) : 0,
-        HomeworkPercent = m.MaxHomework > 0 ? Math.Round((decimal)m.Homework / (decimal)m.MaxHomework * 100, 2) : 0,
-        FinalExamPercent = m.MaxFinalExam > 0 ? Math.Round((decimal)m.FinalExam / (decimal)m.MaxFinalExam * 100, 2) : 0,
-        TotalPercent = (m.MaxOral + m.MaxQuiz1 + m.MaxQuiz2 + m.MaxHomework + m.MaxFinalExam) > 0 ?
-            Math.Round((decimal)m.Total / (decimal)(m.MaxOral + m.MaxQuiz1 + m.MaxQuiz2 + m.MaxHomework + m.MaxFinalExam) * 100, 2) : 0,
-        Grade = m.Total >= 90 ? "ممتاز" :
-               m.Total >= 80 ? "جيد جداً" :
-               m.Total >= 70 ? "جيد" :
-               m.Total >= 60 ? "مقبول" : "ضعيف",
-        m.Notes,
-        m.UpdatedAt
-    })
-    .OrderBy(m => m.LocalSubjectId)
-    .ToList();
+    // ✅ فصل العلامات حسب الفصل الدراسي (للمواد التي يدرسها المعلم فقط)
+    var semester1Marks = marks
+        .Where(m => m.Semester == 1)
+        .Select(m => new
+        {
+            m.LocalSubjectId,
+            m.SubjectName,
+            m.Oral,
+            m.Quiz1,
+            m.Quiz2,
+            m.Homework,
+            m.FinalExam,
+            m.Total,
+            m.MaxOral,
+            m.MaxQuiz1,
+            m.MaxQuiz2,
+            m.MaxHomework,
+            m.MaxFinalExam,
+            OralPercent = m.MaxOral > 0 ? Math.Round((decimal)m.Oral / (decimal)m.MaxOral * 100, 2) : 0,
+            Quiz1Percent = m.MaxQuiz1 > 0 ? Math.Round((decimal)m.Quiz1 / (decimal)m.MaxQuiz1 * 100, 2) : 0,
+            Quiz2Percent = m.MaxQuiz2 > 0 ? Math.Round((decimal)m.Quiz2 / (decimal)m.MaxQuiz2 * 100, 2) : 0,
+            HomeworkPercent = m.MaxHomework > 0 ? Math.Round((decimal)m.Homework / (decimal)m.MaxHomework * 100, 2) : 0,
+            FinalExamPercent = m.MaxFinalExam > 0 ? Math.Round((decimal)m.FinalExam / (decimal)m.MaxFinalExam * 100, 2) : 0,
+            TotalPercent = (m.MaxOral + m.MaxQuiz1 + m.MaxQuiz2 + m.MaxHomework + m.MaxFinalExam) > 0 ?
+                Math.Round((decimal)m.Total / (decimal)(m.MaxOral + m.MaxQuiz1 + m.MaxQuiz2 + m.MaxHomework + m.MaxFinalExam) * 100, 2) : 0,
+            Grade = m.Total >= 90 ? "ممتاز" :
+                   m.Total >= 80 ? "جيد جداً" :
+                   m.Total >= 70 ? "جيد" :
+                   m.Total >= 60 ? "مقبول" : "ضعيف",
+            m.Notes,
+            m.UpdatedAt
+        })
+        .OrderBy(m => m.LocalSubjectId)
+        .ToList();
 
-// ✅ حساب المتوسطات (متوسط العلامات وليس مجموعها)
-var semester1Average = semester1Marks.Any() 
-    ? Math.Round(semester1Marks.Average(m => m.Total), 2)  // ✅ متوسط العلامات
-    : 0;
+    // ✅ نفس الشيء للفصل الثاني
+    var semester2Marks = marks
+        .Where(m => m.Semester == 2)
+        .Select(m => new
+        {
+            m.LocalSubjectId,
+            m.SubjectName,
+            m.Oral,
+            m.Quiz1,
+            m.Quiz2,
+            m.Homework,
+            m.FinalExam,
+            m.Total,
+            m.MaxOral,
+            m.MaxQuiz1,
+            m.MaxQuiz2,
+            m.MaxHomework,
+            m.MaxFinalExam,
+            OralPercent = m.MaxOral > 0 ? Math.Round((decimal)m.Oral / (decimal)m.MaxOral * 100, 2) : 0,
+            Quiz1Percent = m.MaxQuiz1 > 0 ? Math.Round((decimal)m.Quiz1 / (decimal)m.MaxQuiz1 * 100, 2) : 0,
+            Quiz2Percent = m.MaxQuiz2 > 0 ? Math.Round((decimal)m.Quiz2 / (decimal)m.MaxQuiz2 * 100, 2) : 0,
+            HomeworkPercent = m.MaxHomework > 0 ? Math.Round((decimal)m.Homework / (decimal)m.MaxHomework * 100, 2) : 0,
+            FinalExamPercent = m.MaxFinalExam > 0 ? Math.Round((decimal)m.FinalExam / (decimal)m.MaxFinalExam * 100, 2) : 0,
+            TotalPercent = (m.MaxOral + m.MaxQuiz1 + m.MaxQuiz2 + m.MaxHomework + m.MaxFinalExam) > 0 ?
+                Math.Round((decimal)m.Total / (decimal)(m.MaxOral + m.MaxQuiz1 + m.MaxQuiz2 + m.MaxHomework + m.MaxFinalExam) * 100, 2) : 0,
+            Grade = m.Total >= 90 ? "ممتاز" :
+                   m.Total >= 80 ? "جيد جداً" :
+                   m.Total >= 70 ? "جيد" :
+                   m.Total >= 60 ? "مقبول" : "ضعيف",
+            m.Notes,
+            m.UpdatedAt
+        })
+        .OrderBy(m => m.LocalSubjectId)
+        .ToList();
 
-var semester2Average = semester2Marks.Any() 
-    ? Math.Round(semester2Marks.Average(m => m.Total), 2)  // ✅ متوسط العلامات
-    : 0;
+    // ✅ حساب المتوسطات (للمواد التي يدرسها المعلم فقط)
+    var semester1Average = semester1Marks.Any() 
+        ? Math.Round(semester1Marks.Average(m => m.Total), 2)
+        : 0;
 
-// ✅ المتوسط النهائي (متوسط جميع العلامات)
-var finalAverage = marks.Any() 
-    ? Math.Round(marks.Average(m => m.Total), 2)  // ✅ متوسط جميع العلامات
-    : 0;
+    var semester2Average = semester2Marks.Any() 
+        ? Math.Round(semester2Marks.Average(m => m.Total), 2)
+        : 0;
+
+    var finalAverage = marks.Any() 
+        ? Math.Round(marks.Average(m => m.Total), 2)
+        : 0;
 
     // ✅ الرد النهائي
     return Ok(new
@@ -1263,22 +1291,36 @@ var finalAverage = marks.Any()
                 AcademicYear = student.Section?.Grade?.AcademicYear ?? 0
             },
 
-           Semester1Marks = semester1Marks,
-        Semester2Marks = semester2Marks,
-        
-        // ✅ المتوسطات الصحيحة
-        Averages = new
-        {
-            Semester1 = semester1Average,    // ✅ متوسط الفصل الأول
-            Semester2 = semester2Average,    // ✅ متوسط الفصل الثاني
-            Final = finalAverage,            // ✅ المتوسط النهائي
-            SubjectsCount = marks.Count,
-            PassedSubjects = marks.Count(m => m.Total >= 60),
-            FailedSubjects = marks.Count(m => m.Total < 60),
-            SuccessRate = marks.Any() ? 
-                Math.Round((double)marks.Count(m => m.Total >= 60) / marks.Count * 100, 2) : 0
+            // ✅ المواد التي يدرسها المعلم مع حالة وجود علامات
+            TeacherSubjects = teacherSubjectsWithMarks,
+
+            // ✅ إحصائيات المواد
+            SubjectsStatistics = new
+            {
+                TotalSubjects = teacherSubjects.Count,
+                SubjectsWithMarks = teacherSubjectsWithMarks.Count(s => s.HasMarks),
+                SubjectsWithoutMarks = teacherSubjectsWithMarks.Count(s => !s.HasMarks)
+            },
+
+            // ✅ العلامات للفصل الأول (مواد المعلم فقط)
+            Semester1Marks = semester1Marks,
+            
+            // ✅ العلامات للفصل الثاني (مواد المعلم فقط)
+            Semester2Marks = semester2Marks,
+            
+            // ✅ المتوسطات (لمواد المعلم فقط)
+            Averages = new
+            {
+                Semester1 = semester1Average,
+                Semester2 = semester2Average,
+                Final = finalAverage,
+                SubjectsCount = marks.Count,
+                PassedSubjects = marks.Count(m => m.Total >= 60),
+                FailedSubjects = marks.Count(m => m.Total < 60),
+                SuccessRate = marks.Any() ? 
+                    Math.Round((double)marks.Count(m => m.Total >= 60) / marks.Count * 100, 2) : 0
+            }
         }
-    }
-});
+    });
 }
 }

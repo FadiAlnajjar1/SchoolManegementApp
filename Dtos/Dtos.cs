@@ -34,9 +34,11 @@ public class ReservationLocalRequest
 {
     public int LocalStudentNumber { get; set; }
     public int LocalBookNumber { get; set; }      // ✅ Local ID للكتاب
-    public int LocalMemberNumber { get; set; }    // ✅ Local ID للعضو
 }
-
+public class RejectReservationRequest
+{
+    public string? Reason { get; set; }
+}
 // Dtos/ReservationDecisionRequest.cs
 public class ReservationDecisionRequest
 {

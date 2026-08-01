@@ -5,13 +5,14 @@ using SchoolManagement.Api.Auth;
 using SchoolManagement.Api.Data;
 using SchoolManagement.Api.Dtos;
 using SchoolManagement.Api.Models;
+using SchoolManagement.Api.Services;
 
 namespace SchoolManagement.Api.Controllers;
 
 [ApiController]
 [Route("api/student")]
 [Authorize(Roles = Roles.Student)]
-public class StudentController(AppDbContext db) : ControllerBase
+public class StudentController(AppDbContext db, NotificationService notifier) : ControllerBase
 {
     private int StudentId => User.GetUserId();
     private int SchoolId => User.GetSchoolId();
@@ -19,7 +20,7 @@ public class StudentController(AppDbContext db) : ControllerBase
     private async Task<Student?> MeAsync() => await db.Students.FindAsync(StudentId);
 
     // ============================================
-    // جلب صورة جدول الشعبة للطالب
+    // صورة جدول الشعبة
     // ============================================
 
     [HttpGet("schedule-image")]
@@ -524,57 +525,52 @@ public class StudentController(AppDbContext db) : ControllerBase
     }
 
     [HttpDelete("activities/registrations/{localActivityId:int}/{localStudentNumber:int}")]
-public async Task<IActionResult> CancelRegistration(int localActivityId, int localStudentNumber)
-{
-    // ✅ البحث عن النشاط باستخدام LocalActivityId
-    var activity = await db.Activities
-        .FirstOrDefaultAsync(a => a.SchoolId == SchoolId && 
-                                  a.LocalActivityId == localActivityId);
-    
-    if (activity is null)
-        return NotFound(new { success = false, message = $"لا يوجد نشاط برقم {localActivityId}" });
-
-    // ✅ البحث عن الطالب باستخدام LocalStudentNumber
-    var student = await db.Students
-        .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
-                                  s.LocalStudentNumber == localStudentNumber);
-    
-    if (student is null)
-        return NotFound(new { success = false, message = $"لا يوجد طالب برقم {localStudentNumber}" });
-
-    // ✅ البحث عن التسجيل
-    var registration = await db.ActivityRegistrations
-        .Include(r => r.Activity)
-        .FirstOrDefaultAsync(r => r.ActivityId == activity.Id && 
-                                  r.StudentId == student.Id);
-
-    if (registration is null)
-        return NotFound(new { success = false, message = "الطالب غير مسجل في هذا النشاط" });
-
-    // ✅ التحقق من الحالة
-    if (registration.Status == RegistrationStatus.Approved)
-        return BadRequest(new { success = false, message = "لا يمكن إلغاء تسجيل تمت الموافقة عليه، راجع مشرف النشاطات" });
-
-    // ✅ حذف التسجيل
-    db.ActivityRegistrations.Remove(registration);
-    await db.SaveChangesAsync();
-
-    return Ok(new
+    public async Task<IActionResult> CancelRegistration(int localActivityId, int localStudentNumber)
     {
-        success = true,
-        message = "تم إلغاء التسجيل بنجاح",
-        data = new
+        var activity = await db.Activities
+            .FirstOrDefaultAsync(a => a.SchoolId == SchoolId && 
+                                      a.LocalActivityId == localActivityId);
+    
+        if (activity is null)
+            return NotFound(new { success = false, message = $"لا يوجد نشاط برقم {localActivityId}" });
+
+        var student = await db.Students
+            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
+                                      s.LocalStudentNumber == localStudentNumber);
+    
+        if (student is null)
+            return NotFound(new { success = false, message = $"لا يوجد طالب برقم {localStudentNumber}" });
+
+        var registration = await db.ActivityRegistrations
+            .Include(r => r.Activity)
+            .FirstOrDefaultAsync(r => r.ActivityId == activity.Id && 
+                                      r.StudentId == student.Id);
+
+        if (registration is null)
+            return NotFound(new { success = false, message = "الطالب غير مسجل في هذا النشاط" });
+
+        if (registration.Status == RegistrationStatus.Approved)
+            return BadRequest(new { success = false, message = "لا يمكن إلغاء تسجيل تمت الموافقة عليه، راجع مشرف النشاطات" });
+
+        db.ActivityRegistrations.Remove(registration);
+        await db.SaveChangesAsync();
+
+        return Ok(new
         {
-            ActivityLocalId = localActivityId,
-            ActivityName = activity.Name,
-            StudentLocalNumber = localStudentNumber,
-            StudentName = student.Name
-        }
-    });
-}
+            success = true,
+            message = "تم إلغاء التسجيل بنجاح",
+            data = new
+            {
+                ActivityLocalId = localActivityId,
+                ActivityName = activity.Name,
+                StudentLocalNumber = localStudentNumber,
+                StudentName = student.Name
+            }
+        });
+    }
 
     // ============================================
-    // المكتبة
+    // المكتبة - الطالب يحجز الكتاب
     // ============================================
 
     [HttpGet("library/books")]
@@ -588,7 +584,7 @@ public async Task<IActionResult> CancelRegistration(int localActivityId, int loc
                 b.Title,
                 b.Author,
                 b.Copies,
-                AvailableCopies = b.AvailableCopies,
+                b.AvailableCopies,
                 IsAvailable = b.AvailableCopies > 0
             })
             .ToListAsync();
@@ -630,563 +626,516 @@ public async Task<IActionResult> CancelRegistration(int localActivityId, int loc
         });
     }
 
-    // ============================================
-// جلب استعارات الطالب (بدون عضوية)
-// ============================================
-
-[HttpGet("library/loans")]
-public async Task<IActionResult> GetMyLoans()
-{
-    // ✅ استخدام StudentId مباشرة
-    var loans = await db.BookLoans
-        .Where(l => l.StudentId == StudentId)
-        .OrderByDescending(l => l.LoanDate)
-        .Select(l => new
-        {
-            LocalLoanNumber = l.LocalLoanNumber,
-            BookTitle = l.Book != null ? l.Book.Title : "غير معروف",
-            LocalBookNumber = l.Book != null ? l.Book.LocalBookNumber : 0,
-            l.LoanDate,
-            l.DueDate,
-            l.ReturnDate,
-            Status = l.Status.ToString(),
-            IsOverdue = l.DueDate < DateOnly.FromDateTime(DateTime.Today) && l.Status == LoanStatus.Active
-        })
-        .ToListAsync();
-
-    return Ok(new
+    // ✅ الطالب يطلب حجز كتاب (يتم إنشاء طلب حجز)
+    [HttpPost("library/books/{localBookNumber:int}/reserve")]
+    public async Task<IActionResult> ReserveBook(int localBookNumber)
     {
-        success = true,
-        message = "تم جلب استعاراتك بنجاح",
-        data = new
-        {
-            Loans = loans,
-            TotalLoans = loans.Count,
-            ActiveLoans = loans.Count(l => l.Status == "Active")
-        }
-    });
-}
-
-// ============================================
-// حجز كتاب (بدون عضوية)
-// ============================================
-
-[HttpPost("library/books/{localBookNumber:int}/reserve")]
-public async Task<IActionResult> ReserveBook(int localBookNumber)
-{
-    var book = await db.Books
-        .FirstOrDefaultAsync(b => b.SchoolId == SchoolId && 
-                                  b.LocalBookNumber == localBookNumber);
+        var book = await db.Books
+            .FirstOrDefaultAsync(b => b.SchoolId == SchoolId && 
+                                      b.LocalBookNumber == localBookNumber);
             
-    if (book is null) 
-        return NotFound(new { success = false, message = $"لا يوجد كتاب برقم {localBookNumber} في المكتبة" });
+        if (book is null) 
+            return NotFound(new { success = false, message = $"لا يوجد كتاب برقم {localBookNumber} في المكتبة" });
 
-    // ✅ التحقق من وجود حجز معلق
-    var existingReservation = await db.BookReservations
-        .FirstOrDefaultAsync(r => r.BookId == book.Id && 
-                                  r.StudentId == StudentId && 
-                                  r.Status == ReservationStatus.Pending);
+        // التحقق من وجود حجز معلق
+        var existingReservation = await db.BookReservations
+            .FirstOrDefaultAsync(r => r.BookId == book.Id && 
+                                      r.StudentId == StudentId && 
+                                      r.Status == ReservationStatus.Pending);
                                   
-    if (existingReservation is not null)
-        return BadRequest(new { success = false, message = "لديك حجز معلق على هذا الكتاب" });
+        if (existingReservation is not null)
+            return BadRequest(new { success = false, message = "لديك طلب حجز معلق على هذا الكتاب" });
 
-    // ✅ إنشاء الحجز
-    var reservation = new BookReservation
-    {
-        BookId = book.Id,
-        StudentId = StudentId,  // ✅ استخدام StudentId بدلاً من MemberId
-        Date = DateOnly.FromDateTime(DateTime.Today),
-        Status = ReservationStatus.Pending,
-        CreatedAt = DateTime.UtcNow
-    };
+        // التحقق من وجود إعارة نشطة
+        var activeLoan = await db.BookLoans
+            .AnyAsync(l => l.BookId == book.Id && 
+                          l.StudentId == StudentId && 
+                          l.Status == LoanStatus.Active);
 
-    db.BookReservations.Add(reservation);
-    await db.SaveChangesAsync();
+        if (activeLoan)
+            return BadRequest(new { success = false, message = "الكتاب مستعار من قبلك بالفعل" });
 
-    return Created($"api/student/library/reservations/{reservation.Id}", new
-    {
-        success = true,
-        message = "تم حجز الكتاب بنجاح",
-        data = new
+        // إنشاء طلب حجز (Pending)
+        var reservation = new BookReservation
         {
-            LocalBookNumber = book.LocalBookNumber,
-            BookTitle = book.Title,
-            reservation.Date,
-            Status = reservation.Status.ToString()
-        }
-    });
-}
+            BookId = book.Id,
+            StudentId = StudentId,
+            Date = DateOnly.FromDateTime(DateTime.Today),
+            ExpiryDate = DateOnly.FromDateTime(DateTime.Today.AddDays(7)),
+            Status = ReservationStatus.Pending,
+            CreatedAt = DateTime.UtcNow
+        };
 
-// ============================================
-// جلب حجوزات الطالب (بدون عضوية)
-// ============================================
+        db.BookReservations.Add(reservation);
+        await db.SaveChangesAsync();
 
-[HttpGet("library/reservations")]
-public async Task<IActionResult> GetMyReservations()
-{
-    // ✅ استخدام StudentId مباشرة
-    var reservations = await db.BookReservations
-        .Where(r => r.StudentId == StudentId)
-        .OrderByDescending(r => r.Date)
-        .Select(r => new
+        // إشعار لأمين المكتبة
+        await notifier.SendToLibrarianAsync(
+            SchoolId,
+            "طلب حجز كتاب جديد",
+            $"الطالب {await db.Students.Where(s => s.Id == StudentId).Select(s => s.Name).FirstOrDefaultAsync()} يطلب حجز كتاب \"{book.Title}\"",
+            "reservation_request");
+
+        return Created($"api/student/library/reservations/{reservation.Id}", new
         {
-            BookTitle = r.Book != null ? r.Book.Title : "غير معروف",
-            LocalBookNumber = r.Book != null ? r.Book.LocalBookNumber : 0,
-            r.Date,
-            Status = r.Status.ToString(),
-            r.CreatedAt
-        })
-        .ToListAsync();
+            success = true,
+            message = "تم إرسال طلب حجز الكتاب بنجاح، في انتظار موافقة أمين المكتبة",
+            data = new
+            {
+                reservation.Id,
+                LocalBookNumber = book.LocalBookNumber,
+                BookTitle = book.Title,
+                reservation.Date,
+                reservation.ExpiryDate,
+                reservation.Status,
+                StatusName = "Pending",
+                StatusArabic = "قيد الانتظار",
+                reservation.CreatedAt
+            }
+        });
+    }
 
-    return Ok(new
+    // ✅ جلب حجوزات الطالب
+    [HttpGet("library/reservations")]
+    public async Task<IActionResult> GetMyReservations()
     {
-        success = true,
-        message = "تم جلب حجوزاتك بنجاح",
-        data = new
+        var reservations = await db.BookReservations
+            .Include(r => r.Book)
+            .Where(r => r.StudentId == StudentId)
+            .OrderByDescending(r => r.Date)
+            .Select(r => new
+            {
+                r.Id,
+                BookTitle = r.Book != null ? r.Book.Title : "غير معروف",
+                LocalBookNumber = r.Book != null ? r.Book.LocalBookNumber : 0,
+                r.Date,
+                r.ExpiryDate,
+                r.Status,
+                StatusName = r.Status.ToString(),
+                StatusArabic = r.Status == ReservationStatus.Pending ? "قيد الانتظار" :
+                              r.Status == ReservationStatus.Approved ? "تمت الموافقة (لم تستعار بعد)" :
+                              r.Status == ReservationStatus.Rejected ? "مرفوض" :
+                              r.Status == ReservationStatus.Fulfilled ? "تم الاستعارة" :
+                              r.Status == ReservationStatus.Cancelled ? "ملغي" : "غير معروف",
+                r.RejectionReason,
+                r.CreatedAt,
+                r.UpdatedAt
+            })
+            .ToListAsync();
+
+        return Ok(new
         {
-            Reservations = reservations,
-            TotalReservations = reservations.Count,
-            PendingReservations = reservations.Count(r => r.Status == "Pending")
-        }
-    });
-}
+            success = true,
+            message = "تم جلب حجوزاتك بنجاح",
+            data = new
+            {
+                TotalReservations = reservations.Count,
+                PendingReservations = reservations.Count(r => r.Status == ReservationStatus.Pending),
+                ApprovedReservations = reservations.Count(r => r.Status == ReservationStatus.Approved),
+                Reservations = reservations
+            }
+        });
+    }
 
-    // ============================================
-    // التحذيرات والعقوبات
-    // ============================================
+    // ✅ جلب استعارات الطالب
+    [HttpGet("library/loans")]
+    public async Task<IActionResult> GetMyLoans()
+    {
+        var loans = await db.BookLoans
+            .Where(l => l.StudentId == StudentId)
+            .OrderByDescending(l => l.LoanDate)
+            .Select(l => new
+            {
+                LocalLoanNumber = l.LocalLoanNumber,
+                BookTitle = l.Book != null ? l.Book.Title : "غير معروف",
+                LocalBookNumber = l.Book != null ? l.Book.LocalBookNumber : 0,
+                l.LoanDate,
+                l.DueDate,
+                l.ReturnDate,
+                Status = l.Status.ToString(),
+                IsOverdue = l.DueDate < DateOnly.FromDateTime(DateTime.Today) && l.Status == LoanStatus.Active
+            })
+            .ToListAsync();
 
-    // [HttpGet("warnings")]
-    // public async Task<IActionResult> GetMyWarnings()
-    // {
-    //     var warnings = await db.Warnings
-    //         .Where(w => w.StudentId == StudentId)
-    //         .OrderByDescending(w => w.CreatedAt)
-    //         .Select(w => new
-    //         {
-    //             w.Id,
-    //             w.Type,
-    //             TypeName = w.Type.ToString(),
-    //             w.Reason,
-    //             w.CreatedAt,
-    //             IssuedBy = db.Employees
-    //                 .Where(e => e.Id == w.IssuedById)
-    //                 .Select(e => e.Name)
-    //                 .FirstOrDefault() ?? "الإدارة"
-    //         })
-    //         .ToListAsync();
-
-    //     return Ok(new
-    //     {
-    //         success = true,
-    //         message = "تم جلب التحذيرات بنجاح",
-    //         data = warnings
-    //     });
-    // }
-
-    // [HttpGet("punishments")]
-    // public async Task<IActionResult> GetMyPunishments()
-    // {
-    //     var punishments = await db.Punishments
-    //         .Where(p => p.StudentId == StudentId)
-    //         .OrderByDescending(p => p.CreatedAt)
-    //         .Select(p => new
-    //         {
-    //             p.Id,
-    //             p.Type,
-    //             TypeName = p.Type.ToString(),
-    //             p.Reason,
-    //             p.CreatedAt,
-    //             IssuedBy = db.Employees
-    //                 .Where(e => e.Id == p.IssuedById)
-    //                 .Select(e => e.Name)
-    //                 .FirstOrDefault() ?? "الإدارة"
-    //         })
-    //         .ToListAsync();
-
-    //     return Ok(new
-    //     {
-    //         success = true,
-    //         message = "تم جلب العقوبات بنجاح",
-    //         data = punishments
-    //     });
-    // }
+        return Ok(new
+        {
+            success = true,
+            message = "تم جلب استعاراتك بنجاح",
+            data = new
+            {
+                Loans = loans,
+                TotalLoans = loans.Count,
+                ActiveLoans = loans.Count(l => l.Status == "Active")
+            }
+        });
+    }
 
     // ============================================
     // الملف الشخصي الكامل
     // ============================================
 
     [HttpGet("full-profile")]
-public async Task<IActionResult> GetFullProfile()
-{
-    var me = await db.Students
-        .Include(s => s.Section)
-            .ThenInclude(sec => sec!.Grade)
-        .FirstOrDefaultAsync(s => s.Id == StudentId);
-
-    if (me is null) return NotFound();
-
-    var studentInfo = new
+    public async Task<IActionResult> GetFullProfile()
     {
-        me.Name,
-        me.Email,
-        LocalStudentNumber = me.LocalStudentNumber,
-        SectionName = me.Section?.Name,
-        LocalSectionNumber = me.Section?.LocalSectionNumber ?? 0,
-        GradeName = me.Section?.Grade?.Name,
-        LocalGradeNumber = me.Section?.Grade?.LocalGradeNumber ?? 0,
-        AcademicYear = me.Section?.Grade?.AcademicYear ?? 0,
-        me.GuardianName,
-        me.GuardianPhone,
-        me.BloodType,
-        me.ChronicDiseases,
-        me.Allergies,
-        me.HealthNotes,
-        me.BirthDate,
-        me.Address,
-        me.DismissalWarning,
-        me.IsPhoneVerified,
-        me.CreatedAt
-    };
+        var me = await db.Students
+            .Include(s => s.Section)
+                .ThenInclude(sec => sec!.Grade)
+            .FirstOrDefaultAsync(s => s.Id == StudentId);
 
-    var subjects = new List<object>();
-    if (me.SectionId is not null && me.Section?.Grade != null)
-    {
-        var subjectList = await db.Subjects
-            .Where(s => s.SchoolId == SchoolId && 
-                        s.Grade != null && 
-                        s.Grade.LocalGradeNumber == me.Section.Grade.LocalGradeNumber)
-            .Select(s => new
+        if (me is null) return NotFound();
+
+        var studentInfo = new
+        {
+            me.Name,
+            me.Email,
+            LocalStudentNumber = me.LocalStudentNumber,
+            SectionName = me.Section?.Name,
+            LocalSectionNumber = me.Section?.LocalSectionNumber ?? 0,
+            GradeName = me.Section?.Grade?.Name,
+            LocalGradeNumber = me.Section?.Grade?.LocalGradeNumber ?? 0,
+            AcademicYear = me.Section?.Grade?.AcademicYear ?? 0,
+            me.GuardianName,
+            me.GuardianPhone,
+            me.BloodType,
+            me.ChronicDiseases,
+            me.Allergies,
+            me.HealthNotes,
+            me.BirthDate,
+            me.Address,
+            me.DismissalWarning,
+            me.IsPhoneVerified,
+            me.CreatedAt
+        };
+
+        var subjects = new List<object>();
+        if (me.SectionId is not null && me.Section?.Grade != null)
+        {
+            var subjectList = await db.Subjects
+                .Where(s => s.SchoolId == SchoolId && 
+                            s.Grade != null && 
+                            s.Grade.LocalGradeNumber == me.Section.Grade.LocalGradeNumber)
+                .Select(s => new
+                {
+                    LocalSubjectId = s.LocalSubjectId,
+                    s.Name,
+                    TeacherName = s.Teacher != null ? s.Teacher.Name : null,
+                    LocalTeacherNumber = db.EmployeeSchools
+                        .Where(es => es.EmployeeId == s.TeacherId && 
+                                     es.SchoolId == SchoolId && 
+                                     es.IsActive)
+                        .Select(es => (int?)es.LocalEmployeeNumber)
+                        .FirstOrDefault()
+                })
+                .ToListAsync();
+            
+            subjects.AddRange(subjectList);
+        }
+
+        var marks = await db.Marks
+            .Where(m => m.StudentId == StudentId)
+            .Select(m => new
             {
-                LocalSubjectId = s.LocalSubjectId,
-                s.Name,
-                TeacherName = s.Teacher != null ? s.Teacher.Name : null,
+                m.Semester,
+                m.Total,
+                LocalSubjectId = db.Subjects
+                    .Where(s => s.Id == m.SubjectId)
+                    .Select(s => s.LocalSubjectId)
+                    .FirstOrDefault(),
+                SubjectName = db.Subjects
+                    .Where(s => s.Id == m.SubjectId)
+                    .Select(s => s.Name)
+                    .FirstOrDefault() ?? "غير معروف",
                 LocalTeacherNumber = db.EmployeeSchools
-                    .Where(es => es.EmployeeId == s.TeacherId && 
+                    .Where(es => es.EmployeeId == db.Subjects
+                        .Where(s => s.Id == m.SubjectId)
+                        .Select(s => s.TeacherId)
+                        .FirstOrDefault() && 
                                  es.SchoolId == SchoolId && 
                                  es.IsActive)
                     .Select(es => (int?)es.LocalEmployeeNumber)
+                    .FirstOrDefault(),
+                m.Oral,
+                m.Quiz1,
+                m.Quiz2,
+                m.Homework,
+                m.FinalExam,
+                m.UpdatedAt
+            })
+            .ToListAsync();
+
+        var semester1Marks = marks
+            .Where(m => m.Semester == 1)
+            .Select(m => new
+            {
+                m.LocalSubjectId,
+                m.SubjectName,
+                m.Total,
+                m.Oral,
+                m.Quiz1,
+                m.Quiz2,
+                m.Homework,
+                m.FinalExam,
+                m.UpdatedAt
+            })
+            .ToList();
+
+        var semester2Marks = marks
+            .Where(m => m.Semester == 2)
+            .Select(m => new
+            {
+                m.LocalSubjectId,
+                m.SubjectName,
+                m.Total,
+                m.Oral,
+                m.Quiz1,
+                m.Quiz2,
+                m.Homework,
+                m.FinalExam,
+                m.UpdatedAt
+            })
+            .ToList();
+
+        var semester1Average = semester1Marks.Any() 
+            ? Math.Round(semester1Marks.Average(m => m.Total), 2) 
+            : 0;
+
+        var semester2Average = semester2Marks.Any() 
+            ? Math.Round(semester2Marks.Average(m => m.Total), 2) 
+            : 0;
+
+        var finalAverage = marks.Any() 
+            ? Math.Round(marks.Average(m => m.Total), 2) 
+            : 0;
+
+        var reportCards = await db.ReportCards
+            .Where(r => r.StudentId == StudentId)
+            .OrderByDescending(r => r.Year)
+            .ThenByDescending(r => r.Semester)
+            .Select(r => new
+            {
+                r.Semester,
+                r.Year,
+                r.Average,
+                r.Rank,
+                r.Passed,
+                Subjects = r.Subjects.Select(s => new
+                {
+                    s.SubjectName,
+                    LocalSubjectId = db.Subjects
+                        .Where(sub => sub.Name == s.SubjectName && sub.SchoolId == SchoolId)
+                        .Select(sub => sub.LocalSubjectId)
+                        .FirstOrDefault(),
+                    s.Total,
+                }).ToList()
+            })
+            .ToListAsync();
+
+        var attendance = await db.StudentAttendances
+            .Where(a => a.StudentId == StudentId)
+            .OrderByDescending(a => a.Date)
+            .Take(200)
+            .Select(a => new
+            {
+                a.Date,
+                Status = a.Status.ToString(),
+                LocalSectionNumber = db.Sections
+                    .Where(s => s.Id == a.SectionId)
+                    .Select(s => s.LocalSectionNumber)
                     .FirstOrDefault()
             })
             .ToListAsync();
-        
-        subjects.AddRange(subjectList);
-    }
 
-    // ✅ جلب العلامات
-    var marks = await db.Marks
-        .Where(m => m.StudentId == StudentId)
-        .Select(m => new
-        {
-            m.Semester,
-            m.Total,
-            LocalSubjectId = db.Subjects
-                .Where(s => s.Id == m.SubjectId)
-                .Select(s => s.LocalSubjectId)
-                .FirstOrDefault(),
-            SubjectName = db.Subjects
-                .Where(s => s.Id == m.SubjectId)
-                .Select(s => s.Name)
-                .FirstOrDefault() ?? "غير معروف",
-            LocalTeacherNumber = db.EmployeeSchools
-                .Where(es => es.EmployeeId == db.Subjects
-                    .Where(s => s.Id == m.SubjectId)
-                    .Select(s => s.TeacherId)
-                    .FirstOrDefault() && 
-                             es.SchoolId == SchoolId && 
-                             es.IsActive)
-                .Select(es => (int?)es.LocalEmployeeNumber)
-                .FirstOrDefault(),
-            m.Oral,
-            m.Quiz1,
-            m.Quiz2,
-            m.Homework,
-            m.FinalExam,
-            m.UpdatedAt
-        })
-        .ToListAsync();
+        var scheduleImage = me.SectionId is not null ?
+            await db.ScheduleImages
+                .Where(s => s.SchoolId == SchoolId && 
+                            s.SectionId == me.SectionId && 
+                            s.Type == ScheduleImageType.Section)
+                .OrderByDescending(s => s.CreatedAt)
+                .Select(s => new
+                {
+                    s.ImageUrl,
+                    s.Description,
+                    s.CreatedAt
+                })
+                .FirstOrDefaultAsync() : null;
 
-    // ✅ فصل العلامات حسب الفصل الدراسي
-    var semester1Marks = marks
-        .Where(m => m.Semester == 1)
-        .Select(m => new
-        {
-            m.LocalSubjectId,
-            m.SubjectName,
-            m.Total,
-            m.Oral,
-            m.Quiz1,
-            m.Quiz2,
-            m.Homework,
-            m.FinalExam,
-            m.UpdatedAt
-        })
-        .ToList();
-
-    var semester2Marks = marks
-        .Where(m => m.Semester == 2)
-        .Select(m => new
-        {
-            m.LocalSubjectId,
-            m.SubjectName,
-            m.Total,
-            m.Oral,
-            m.Quiz1,
-            m.Quiz2,
-            m.Homework,
-            m.FinalExam,
-            m.UpdatedAt
-        })
-        .ToList();
-
-    // ✅ حساب المتوسطات
-    var semester1Average = semester1Marks.Any() 
-        ? Math.Round(semester1Marks.Average(m => m.Total), 2) 
-        : 0;
-
-    var semester2Average = semester2Marks.Any() 
-        ? Math.Round(semester2Marks.Average(m => m.Total), 2) 
-        : 0;
-
-    var finalAverage = marks.Any() 
-        ? Math.Round(marks.Average(m => m.Total), 2) 
-        : 0;
-
-    var reportCards = await db.ReportCards
-        .Where(r => r.StudentId == StudentId)
-        .OrderByDescending(r => r.Year)
-        .ThenByDescending(r => r.Semester)
-        .Select(r => new
-        {
-            r.Semester,
-            r.Year,
-            r.Average,
-            r.Rank,
-            r.Passed,
-            Subjects = r.Subjects.Select(s => new
+        // ✅ استعارات الطالب
+        var loans = await db.BookLoans
+            .Where(l => l.StudentId == StudentId)
+            .OrderByDescending(l => l.LoanDate)
+            .Select(l => new
             {
-                s.SubjectName,
-                LocalSubjectId = db.Subjects
-                    .Where(sub => sub.Name == s.SubjectName && sub.SchoolId == SchoolId)
-                    .Select(sub => sub.LocalSubjectId)
-                    .FirstOrDefault(),
-                s.Total,
-            }).ToList()
-        })
-        .ToListAsync();
+                LocalLoanNumber = l.LocalLoanNumber,
+                BookTitle = l.Book != null ? l.Book.Title : "غير معروف",
+                LocalBookNumber = l.Book != null ? l.Book.LocalBookNumber : 0,
+                l.LoanDate,
+                l.DueDate,
+                l.ReturnDate,
+                Status = l.Status.ToString(),
+                IsOverdue = l.DueDate < DateOnly.FromDateTime(DateTime.Today) && l.Status == LoanStatus.Active
+            })
+            .ToListAsync();
 
-    var attendance = await db.StudentAttendances
-        .Where(a => a.StudentId == StudentId)
-        .OrderByDescending(a => a.Date)
-        .Take(200)
-        .Select(a => new
-        {
-            a.Date,
-            Status = a.Status.ToString(),
-            LocalSectionNumber = db.Sections
-                .Where(s => s.Id == a.SectionId)
-                .Select(s => s.LocalSectionNumber)
-                .FirstOrDefault()
-        })
-        .ToListAsync();
+        // ✅ حجوزات الطالب
+        var reservations = await db.BookReservations
+            .Where(r => r.StudentId == StudentId)
+            .OrderByDescending(r => r.Date)
+            .Select(r => new
+            {
+                BookTitle = r.Book != null ? r.Book.Title : "غير معروف",
+                LocalBookNumber = r.Book != null ? r.Book.LocalBookNumber : 0,
+                r.Date,
+                r.ExpiryDate,
+                Status = r.Status.ToString(),
+                StatusArabic = r.Status == ReservationStatus.Pending ? "قيد الانتظار" :
+                              r.Status == ReservationStatus.Approved ? "تمت الموافقة" :
+                              r.Status == ReservationStatus.Rejected ? "مرفوض" :
+                              r.Status == ReservationStatus.Fulfilled ? "تم الاستعارة" :
+                              r.Status == ReservationStatus.Cancelled ? "ملغي" : "غير معروف",
+                r.CreatedAt
+            })
+            .ToListAsync();
 
-    var scheduleImage = me.SectionId is not null ?
-        await db.ScheduleImages
-            .Where(s => s.SchoolId == SchoolId && 
-                        s.SectionId == me.SectionId && 
-                        s.Type == ScheduleImageType.Section)
+        var activities = await db.ActivityRegistrations
+            .Where(r => r.StudentId == StudentId)
+            .Select(r => new
+            {
+                ActivityName = db.Activities
+                    .Where(a => a.Id == r.ActivityId)
+                    .Select(a => a.Name)
+                    .FirstOrDefault() ?? "غير معروف",
+                ActivityType = db.Activities
+                    .Where(a => a.Id == r.ActivityId)
+                    .Select(a => a.Type.ToString())
+                    .FirstOrDefault() ?? "غير معروف",
+                Status = r.Status.ToString(),
+                r.CreatedAt
+            })
+            .ToListAsync();
+
+        var warnings = await db.Warnings
+            .Where(w => w.StudentId == StudentId)
+            .OrderByDescending(w => w.CreatedAt)
+            .Select(w => new
+            {
+                Type = w.Type.ToString(),
+                w.Reason,
+                w.CreatedAt,
+                IssuedBy = db.Employees
+                    .Where(e => e.Id == w.IssuedById)
+                    .Select(e => e.Name)
+                    .FirstOrDefault() ?? "الإدارة"
+            })
+            .ToListAsync();
+
+        var punishments = await db.Punishments
+            .Where(p => p.StudentId == StudentId)
+            .OrderByDescending(p => p.CreatedAt)
+            .Select(p => new
+            {
+                Type = p.Type.ToString(),
+                p.Reason,
+                p.CreatedAt,
+                IssuedBy = db.Employees
+                    .Where(e => e.Id == p.IssuedById)
+                    .Select(e => e.Name)
+                    .FirstOrDefault() ?? "الإدارة"
+            })
+            .ToListAsync();
+
+        var summons = await db.GuardianSummons
+            .Where(s => s.StudentId == StudentId)
             .OrderByDescending(s => s.CreatedAt)
             .Select(s => new
             {
-                s.ImageUrl,
-                s.Description,
+                s.Reason,
+                s.Date,
                 s.CreatedAt
             })
-            .FirstOrDefaultAsync() : null;
+            .ToListAsync();
 
-    // ❌ إزالة LibraryMember
-    // var member = await db.LibraryMembers
-    //     .Where(m => m.StudentId == StudentId)
-    //     .Select(m => new
-    //     {
-    //         LocalMemberNumber = m.LocalMemberNumber,
-    //         Status = m.Status.ToString(),
-    //         m.CreatedAt
-    //     })
-    //     .FirstOrDefaultAsync();
+        var complaints = await db.Complaints
+            .Where(c => c.FromUserId == StudentId && c.FromUserType == UserType.Student)
+            .OrderByDescending(c => c.CreatedAt)
+            .Select(c => new
+            {
+                c.Against,
+                c.Content,
+                Status = c.Status.ToString(),
+                c.Resolution,
+                c.CreatedAt
+            })
+            .ToListAsync();
 
-    // ✅ جلب استعارات الطالب (بدون عضوية)
-    var loans = await db.BookLoans
-        .Where(l => l.StudentId == StudentId)
-        .OrderByDescending(l => l.LoanDate)
-        .Select(l => new
+        var notifications = await db.Notifications
+            .Where(n => n.UserId == StudentId && n.UserType == UserType.Student)
+            .OrderByDescending(n => n.CreatedAt)
+            .Take(100)
+            .Select(n => new
+            {
+                n.Title,
+                n.Body,
+                n.Type,
+                n.IsRead,
+                n.CreatedAt
+            })
+            .ToListAsync();
+
+        var statistics = new
         {
-            LocalLoanNumber = l.LocalLoanNumber,
-            BookTitle = l.Book != null ? l.Book.Title : "غير معروف",
-            LocalBookNumber = l.Book != null ? l.Book.LocalBookNumber : 0,
-            l.LoanDate,
-            l.DueDate,
-            l.ReturnDate,
-            Status = l.Status.ToString(),
-            IsOverdue = l.DueDate < DateOnly.FromDateTime(DateTime.Today) && l.Status == LoanStatus.Active
-        })
-        .ToListAsync();
-
-    // ✅ جلب حجوزات الطالب (بدون عضوية)
-    var reservations = await db.BookReservations
-        .Where(r => r.StudentId == StudentId)
-        .OrderByDescending(r => r.Date)
-        .Select(r => new
-        {
-            BookTitle = r.Book != null ? r.Book.Title : "غير معروف",
-            LocalBookNumber = r.Book != null ? r.Book.LocalBookNumber : 0,
-            r.Date,
-            Status = r.Status.ToString(),
-            r.CreatedAt
-        })
-        .ToListAsync();
-
-    var activities = await db.ActivityRegistrations
-        .Where(r => r.StudentId == StudentId)
-        .Select(r => new
-        {
-            ActivityName = db.Activities
-                .Where(a => a.Id == r.ActivityId)
-                .Select(a => a.Name)
-                .FirstOrDefault() ?? "غير معروف",
-            ActivityType = db.Activities
-                .Where(a => a.Id == r.ActivityId)
-                .Select(a => a.Type.ToString())
-                .FirstOrDefault() ?? "غير معروف",
-            Status = r.Status.ToString(),
-            r.CreatedAt
-        })
-        .ToListAsync();
-
-    var warnings = await db.Warnings
-        .Where(w => w.StudentId == StudentId)
-        .OrderByDescending(w => w.CreatedAt)
-        .Select(w => new
-        {
-            Type = w.Type.ToString(),
-            w.Reason,
-            w.CreatedAt,
-            IssuedBy = db.Employees
-                .Where(e => e.Id == w.IssuedById)
-                .Select(e => e.Name)
-                .FirstOrDefault() ?? "الإدارة"
-        })
-        .ToListAsync();
-
-    var punishments = await db.Punishments
-        .Where(p => p.StudentId == StudentId)
-        .OrderByDescending(p => p.CreatedAt)
-        .Select(p => new
-        {
-            Type = p.Type.ToString(),
-            p.Reason,
-            p.CreatedAt,
-            IssuedBy = db.Employees
-                .Where(e => e.Id == p.IssuedById)
-                .Select(e => e.Name)
-                .FirstOrDefault() ?? "الإدارة"
-        })
-        .ToListAsync();
-
-    var summons = await db.GuardianSummons
-        .Where(s => s.StudentId == StudentId)
-        .OrderByDescending(s => s.CreatedAt)
-        .Select(s => new
-        {
-            s.Reason,
-            s.Date,
-            s.CreatedAt
-        })
-        .ToListAsync();
-
-    var complaints = await db.Complaints
-        .Where(c => c.FromUserId == StudentId && c.FromUserType == UserType.Student)
-        .OrderByDescending(c => c.CreatedAt)
-        .Select(c => new
-        {
-            c.Against,
-            c.Content,
-            Status = c.Status.ToString(),
-            c.Resolution,
-            c.CreatedAt
-        })
-        .ToListAsync();
-
-    var notifications = await db.Notifications
-        .Where(n => n.UserId == StudentId && n.UserType == UserType.Student)
-        .OrderByDescending(n => n.CreatedAt)
-        .Take(100)
-        .Select(n => new
-        {
-            n.Title,
-            n.Body,
-            n.Type,
-            n.IsRead,
-            n.CreatedAt
-        })
-        .ToListAsync();
-
-    var statistics = new
-    {
-        TotalSubjects = subjects.Count,
-        TotalMarks = marks.Count,
-        TotalSemester1Marks = semester1Marks.Count,
-        TotalSemester2Marks = semester2Marks.Count,
-        Semester1Average = semester1Average,
-        Semester2Average = semester2Average,
-        FinalAverage = finalAverage,
-        TotalReportCards = reportCards.Count,
-        TotalAttendance = attendance.Count,
-        TotalActivities = activities.Count,
-        TotalWarnings = warnings.Count,
-        TotalPunishments = punishments.Count,
-        TotalComplaints = complaints.Count,
-        TotalNotifications = notifications.Count,
-        TotalLoans = loans.Count,
-        TotalReservations = reservations.Count,
-        ActiveLoans = loans.Count(l => l.Status == "Active")
-    };
-
-    return Ok(new
-    {
-        success = true,
-        message = "تم جلب الملف الشخصي الكامل بنجاح",
-        data = new
-        {
-            Student = studentInfo,
-            Statistics = statistics,
-            Subjects = subjects,
-            // ✅ العلامات مقسمة حسب الفصل الدراسي
-            Semester1Marks = semester1Marks,
-            Semester2Marks = semester2Marks,
-            // ✅ المتوسطات
+            TotalSubjects = subjects.Count,
+            TotalMarks = marks.Count,
+            TotalSemester1Marks = semester1Marks.Count,
+            TotalSemester2Marks = semester2Marks.Count,
             Semester1Average = semester1Average,
             Semester2Average = semester2Average,
             FinalAverage = finalAverage,
-            ReportCards = reportCards,
-            Attendance = attendance,
-            ScheduleImage = scheduleImage,
-            // ✅ المكتبة بدون عضوية
-            Library = new
+            TotalReportCards = reportCards.Count,
+            TotalAttendance = attendance.Count,
+            TotalActivities = activities.Count,
+            TotalWarnings = warnings.Count,
+            TotalPunishments = punishments.Count,
+            TotalComplaints = complaints.Count,
+            TotalNotifications = notifications.Count,
+            TotalLoans = loans.Count,
+            TotalReservations = reservations.Count,
+            ActiveLoans = loans.Count(l => l.Status == "Active"),
+            PendingReservations = reservations.Count(r => r.Status == "Pending")
+        };
+
+        return Ok(new
+        {
+            success = true,
+            message = "تم جلب الملف الشخصي الكامل بنجاح",
+            data = new
             {
-                Loans = loans,
-                Reservations = reservations,
-                TotalLoans = loans.Count,
-                ActiveLoans = loans.Count(l => l.Status == "Active"),
-                TotalReservations = reservations.Count,
-                PendingReservations = reservations.Count(r => r.Status == "Pending")
-            },
-            Activities = activities,
-            Warnings = warnings,
-            Punishments = punishments,
-            Summons = summons,
-            Complaints = complaints,
-            Notifications = notifications
-        }
-    });
-}
+                Student = studentInfo,
+                Statistics = statistics,
+                Subjects = subjects,
+                Semester1Marks = semester1Marks,
+                Semester2Marks = semester2Marks,
+                Semester1Average = semester1Average,
+                Semester2Average = semester2Average,
+                FinalAverage = finalAverage,
+                ReportCards = reportCards,
+                Attendance = attendance,
+                ScheduleImage = scheduleImage,
+                Library = new
+                {
+                    Loans = loans,
+                    Reservations = reservations,
+                    TotalLoans = loans.Count,
+                    ActiveLoans = loans.Count(l => l.Status == "Active"),
+                    TotalReservations = reservations.Count,
+                    PendingReservations = reservations.Count(r => r.Status == "Pending")
+                },
+                Activities = activities,
+                Warnings = warnings,
+                Punishments = punishments,
+                Summons = summons,
+                Complaints = complaints,
+                Notifications = notifications
+            }
+        });
+    }
 }
