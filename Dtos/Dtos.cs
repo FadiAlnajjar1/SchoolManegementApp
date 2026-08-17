@@ -316,6 +316,7 @@ public class PunishmentLocalRequest
 public class TeacherGradeLocalRequest
 {
     public int TeacherLocalNumber { get; set; }
+     public int LocalGradeNumber { get; set; }
     public int LocalSubjectId { get; set; }
     public int LocalSectionNumber { get; set; }
 }

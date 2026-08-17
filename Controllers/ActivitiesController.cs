@@ -66,10 +66,10 @@ public class ActivitiesController(
             $"📢 نشاط جديد: {request.Title}",
             $"تم فتح التسجيل في النشاط \"{request.Title}\"{expiryMessage}",
             "activity",
-            $"/activities/{newLocalId}"
+            $"/activities/{activity.Id}"  // ✅ استخدام Id (وليس LocalActivityId)
         );
 
-        return Created($"api/activities/{activity.LocalActivityId}", new
+        return Created($"api/activities/{activity.Id}", new  // ✅ استخدام Id في الـ Response
         {
             success = true,
             message = "تم إنشاء النشاط بنجاح",
@@ -124,21 +124,21 @@ public class ActivitiesController(
     }
 
     // ============================================
-    // جلب نشاط محدد بواسطة LocalActivityId
+    // جلب نشاط محدد (باستخدام Id)
     // ============================================
 
-    [HttpGet("{localActivityId:int}")]
-    public async Task<IActionResult> GetActivity(int localActivityId)
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> GetActivity(int id)
     {
         var activity = await db.Activities
             .FirstOrDefaultAsync(a => a.SchoolId == SchoolId &&
-                                      a.LocalActivityId == localActivityId);
+                                      a.Id == id);
 
         if (activity is null)
             return NotFound(new
             {
                 success = false,
-                message = $"لا يوجد نشاط برقم {localActivityId} في هذه المدرسة"
+                message = $"لا يوجد نشاط بهذا المعرف"
             });
 
         var registeredCount = await db.ActivityRegistrations
@@ -180,120 +180,120 @@ public class ActivitiesController(
     }
 
     // ============================================
-    // تحديث نشاط
+    // تحديث نشاط (باستخدام Id)
     // ============================================
 
     [HttpPut("{id:int}")]
-public async Task<IActionResult> Update(int id, ActivityUpdateRequest request)
-{
-    var activity = await db.Activities
-        .FirstOrDefaultAsync(a => a.SchoolId == SchoolId &&
-                                  a.Id == id);
-
-    if (activity is null)
-        return NotFound(new
-        {
-            success = false,
-            message = $"لا يوجد نشاط بهذا المعرف في هذه المدرسة"
-        });
-
-    // ✅ التحقق من أن ExpiryDate في المستقبل (إذا تم إرساله)
-    if (request.ExpiryDate.HasValue && request.ExpiryDate.Value <= DateTime.UtcNow)
-    {
-        return BadRequest(new
-        {
-            success = false,
-            message = "تاريخ الانتهاء يجب أن يكون في المستقبل"
-        });
-    }
-
-    // تحديث الحقول
-    if (!string.IsNullOrWhiteSpace(request.Title))
-        activity.Title = request.Title;
-
-    if (!string.IsNullOrWhiteSpace(request.Description))
-        activity.Description = request.Description;
-
-    if (request.ExpiryDate.HasValue)
-        activity.ExpiryDate = request.ExpiryDate;
-
-    await db.SaveChangesAsync();
-
-    return Ok(new
-    {
-        success = true,
-        message = "تم تحديث النشاط بنجاح",
-        data = new
-        {
-            activity.Id,
-            activity.LocalActivityId,
-            activity.Title,
-            activity.Description,
-            activity.ExpiryDate,
-            activity.CreatedAt
-        }
-    });
-}
-
-// ============================================
-// حذف نشاط
-// ============================================
-
-[HttpDelete("{id:int}")]
-public async Task<IActionResult> Delete(int id)
-{
-    var activity = await db.Activities
-        .FirstOrDefaultAsync(a => a.SchoolId == SchoolId &&
-                                  a.Id == id);
-
-    if (activity is null)
-        return NotFound(new
-        {
-            success = false,
-            message = $"لا يوجد نشاط بهذا المعرف في هذه المدرسة"
-        });
-
-    // حذف التسجيلات المرتبطة بالنشاط
-    var registrations = await db.ActivityRegistrations
-        .Where(r => r.ActivityId == activity.Id)
-        .ToListAsync();
-
-    if (registrations.Any())
-        db.ActivityRegistrations.RemoveRange(registrations);
-
-    db.Activities.Remove(activity);
-    await db.SaveChangesAsync();
-
-    return Ok(new
-    {
-        success = true,
-        message = "تم حذف النشاط وجميع التسجيلات المرتبطة بنجاح",
-        data = new
-        {
-            activity.Id,
-            activity.LocalActivityId,
-            activity.Title,
-            DeletedRegistrations = registrations.Count
-        }
-    });
-}
-
-    // ============================================
-    // جلب الطلاب المسجلين في نشاط معين
-    // ============================================
-
-    [HttpGet("{localActivityId:int}/registrations")]
-    public async Task<IActionResult> GetActivityRegistrations(int localActivityId)
+    public async Task<IActionResult> Update(int id, ActivityUpdateRequest request)
     {
         var activity = await db.Activities
             .FirstOrDefaultAsync(a => a.SchoolId == SchoolId &&
-                                      a.LocalActivityId == localActivityId);
+                                      a.Id == id);
 
         if (activity is null)
             return NotFound(new
             {
                 success = false,
-                message = $"لا يوجد نشاط برقم {localActivityId} في هذه المدرسة"
+                message = $"لا يوجد نشاط بهذا المعرف"
+            });
+
+        // ✅ التحقق من أن ExpiryDate في المستقبل (إذا تم إرساله)
+        if (request.ExpiryDate.HasValue && request.ExpiryDate.Value <= DateTime.UtcNow)
+        {
+            return BadRequest(new
+            {
+                success = false,
+                message = "تاريخ الانتهاء يجب أن يكون في المستقبل"
+            });
+        }
+
+        // تحديث الحقول
+        if (!string.IsNullOrWhiteSpace(request.Title))
+            activity.Title = request.Title;
+
+        if (!string.IsNullOrWhiteSpace(request.Description))
+            activity.Description = request.Description;
+
+        if (request.ExpiryDate.HasValue)
+            activity.ExpiryDate = request.ExpiryDate;
+
+        await db.SaveChangesAsync();
+
+        return Ok(new
+        {
+            success = true,
+            message = "تم تحديث النشاط بنجاح",
+            data = new
+            {
+                activity.Id,
+                activity.LocalActivityId,
+                activity.Title,
+                activity.Description,
+                activity.ExpiryDate,
+                activity.CreatedAt
+            }
+        });
+    }
+
+    // ============================================
+    // حذف نشاط (باستخدام Id)
+    // ============================================
+
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> Delete(int id)
+    {
+        var activity = await db.Activities
+            .FirstOrDefaultAsync(a => a.SchoolId == SchoolId &&
+                                      a.Id == id);
+
+        if (activity is null)
+            return NotFound(new
+            {
+                success = false,
+                message = $"لا يوجد نشاط بهذا المعرف"
+            });
+
+        // حذف التسجيلات المرتبطة بالنشاط
+        var registrations = await db.ActivityRegistrations
+            .Where(r => r.ActivityId == activity.Id)
+            .ToListAsync();
+
+        if (registrations.Any())
+            db.ActivityRegistrations.RemoveRange(registrations);
+
+        db.Activities.Remove(activity);
+        await db.SaveChangesAsync();
+
+        return Ok(new
+        {
+            success = true,
+            message = "تم حذف النشاط وجميع التسجيلات المرتبطة بنجاح",
+            data = new
+            {
+                activity.Id,
+                activity.LocalActivityId,
+                activity.Title,
+                DeletedRegistrations = registrations.Count
+            }
+        });
+    }
+
+    // ============================================
+    // جلب الطلاب المسجلين في نشاط معين (باستخدام Id)
+    // ============================================
+
+    [HttpGet("{id:int}/registrations")]
+    public async Task<IActionResult> GetActivityRegistrations(int id)
+    {
+        var activity = await db.Activities
+            .FirstOrDefaultAsync(a => a.SchoolId == SchoolId &&
+                                      a.Id == id);
+
+        if (activity is null)
+            return NotFound(new
+            {
+                success = false,
+                message = $"لا يوجد نشاط بهذا المعرف"
             });
 
         var registrations = await db.ActivityRegistrations
@@ -348,21 +348,21 @@ public async Task<IActionResult> Delete(int id)
     }
 
     // ============================================
-    // جلب الطلاب المنتظرين (Pending) في نشاط معين
+    // جلب الطلاب المنتظرين (Pending) في نشاط معين (باستخدام Id)
     // ============================================
 
-    [HttpGet("{localActivityId:int}/registrations/pending")]
-    public async Task<IActionResult> GetPendingRegistrations(int localActivityId)
+    [HttpGet("{id:int}/registrations/pending")]
+    public async Task<IActionResult> GetPendingRegistrations(int id)
     {
         var activity = await db.Activities
             .FirstOrDefaultAsync(a => a.SchoolId == SchoolId &&
-                                      a.LocalActivityId == localActivityId);
+                                      a.Id == id);
 
         if (activity is null)
             return NotFound(new
             {
                 success = false,
-                message = $"لا يوجد نشاط برقم {localActivityId} في هذه المدرسة"
+                message = $"لا يوجد نشاط بهذا المعرف"
             });
 
         var pendingRegistrations = await db.ActivityRegistrations
@@ -404,22 +404,22 @@ public async Task<IActionResult> Delete(int id)
     }
 
     // ============================================
-    // قبول تسجيل طالب في نشاط
+    // قبول تسجيل طالب في نشاط (باستخدام Id و LocalStudentNumber)
     // ============================================
 
-    [HttpPost("{localActivityId:int}/registrations/{studentLocalNumber:int}/approve")]
-    public async Task<IActionResult> ApproveRegistration(int localActivityId, int studentLocalNumber)
+    [HttpPost("{id:int}/registrations/{studentLocalNumber:int}/approve")]
+    public async Task<IActionResult> ApproveRegistration(int id, int studentLocalNumber)
     {
         // 1. التحقق من وجود النشاط
         var activity = await db.Activities
             .FirstOrDefaultAsync(a => a.SchoolId == SchoolId &&
-                                      a.LocalActivityId == localActivityId);
+                                      a.Id == id);
 
         if (activity is null)
             return NotFound(new
             {
                 success = false,
-                message = $"لا يوجد نشاط برقم {localActivityId} في هذه المدرسة"
+                message = $"لا يوجد نشاط بهذا المعرف"
             });
 
         // 2. التحقق من وجود الطالب
@@ -467,7 +467,7 @@ public async Task<IActionResult> Delete(int id)
             "✅ تم قبولك في النشاط",
             $"تم قبول طلبك في النشاط \"{activity.Title}\"",
             "activity",
-            $"/activities/{activity.LocalActivityId}"
+            $"/activities/{activity.Id}"  // ✅ استخدام Id
         );
 
         return Ok(new
@@ -489,22 +489,22 @@ public async Task<IActionResult> Delete(int id)
     }
 
     // ============================================
-    // رفض تسجيل طالب في نشاط
+    // رفض تسجيل طالب في نشاط (باستخدام Id و LocalStudentNumber)
     // ============================================
 
-    [HttpPost("{localActivityId:int}/registrations/{studentLocalNumber:int}/reject")]
-    public async Task<IActionResult> RejectRegistration(int localActivityId, int studentLocalNumber, [FromBody] RejectRequest? request)
+    [HttpPost("{id:int}/registrations/{studentLocalNumber:int}/reject")]
+    public async Task<IActionResult> RejectRegistration(int id, int studentLocalNumber, [FromBody] RejectRequest? request)
     {
         // 1. التحقق من وجود النشاط
         var activity = await db.Activities
             .FirstOrDefaultAsync(a => a.SchoolId == SchoolId &&
-                                      a.LocalActivityId == localActivityId);
+                                      a.Id == id);
 
         if (activity is null)
             return NotFound(new
             {
                 success = false,
-                message = $"لا يوجد نشاط برقم {localActivityId} في هذه المدرسة"
+                message = $"لا يوجد نشاط بهذا المعرف"
             });
 
         // 2. التحقق من وجود الطالب
@@ -553,7 +553,7 @@ public async Task<IActionResult> Delete(int id)
             "❌ تم رفض طلبك في النشاط",
             $"تم رفض طلبك في النشاط \"{activity.Title}\". السبب: {registration.RejectionReason}",
             "activity",
-            $"/activities/{activity.LocalActivityId}"
+            $"/activities/{activity.Id}"  // ✅ استخدام Id
         );
 
         return Ok(new

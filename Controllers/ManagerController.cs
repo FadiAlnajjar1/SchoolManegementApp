@@ -1190,235 +1190,406 @@ public async Task<IActionResult> UpdateGrade(int localGradeNumber, GradeRequest 
     // ربط المعلم بالمادة (باستخدام Local IDs)
     // ============================================
 
-    [HttpPost("assign-teacher-to-subject")]
-    public async Task<IActionResult> AssignTeacherToSubject(TeacherSubjectLocalRequest request)
-    {
-        var teacherSchool = await db.EmployeeSchools
-            .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
-                                       es.LocalEmployeeNumber == request.TeacherLocalNumber &&
-                                       es.Role == EmployeeRole.Teacher &&
-                                       es.IsActive);
+    // [HttpPost("assign-teacher-to-subject")]
+    // public async Task<IActionResult> AssignTeacherToSubject(TeacherSubjectLocalRequest request)
+    // {
+    //     var teacherSchool = await db.EmployeeSchools
+    //         .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
+    //                                    es.LocalEmployeeNumber == request.TeacherLocalNumber &&
+    //                                    es.Role == EmployeeRole.Teacher &&
+    //                                    es.IsActive);
 
-        if (teacherSchool is null)
-            return BadRequest(new { message = $"لا يوجد معلم برقم {request.TeacherLocalNumber} في هذه المدرسة" });
+    //     if (teacherSchool is null)
+    //         return BadRequest(new { message = $"لا يوجد معلم برقم {request.TeacherLocalNumber} في هذه المدرسة" });
 
-        var subject = await db.Subjects
-            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
-                                      s.LocalSubjectId == request.LocalSubjectId);
+    //     var subject = await db.Subjects
+    //         .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+    //                                   s.LocalSubjectId == request.LocalSubjectId);
 
-        if (subject is null)
-            return BadRequest(new { message = $"لا توجد مادة برقم {request.LocalSubjectId} في هذه المدرسة" });
+    //     if (subject is null)
+    //         return BadRequest(new { message = $"لا توجد مادة برقم {request.LocalSubjectId} في هذه المدرسة" });
 
-        var teacherId = teacherSchool.EmployeeId;
-        var subjectId = subject.Id;
+    //     var teacherId = teacherSchool.EmployeeId;
+    //     var subjectId = subject.Id;
 
-        var exists = await db.TeacherSubjects
-            .AnyAsync(t => t.TeacherId == teacherId && t.SubjectId == subjectId);
+    //     var exists = await db.TeacherSubjects
+    //         .AnyAsync(t => t.TeacherId == teacherId && t.SubjectId == subjectId);
 
-        if (exists)
-            return BadRequest(new { message = "هذا المعلم مرتبط بالفعل بهذه المادة" });
+    //     if (exists)
+    //         return BadRequest(new { message = "هذا المعلم مرتبط بالفعل بهذه المادة" });
 
-        var maxLocalId = await db.TeacherSubjects
-            .Where(ts => ts.SchoolId == SchoolId)
-            .Select(ts => (int?)ts.LocalTeacherSubjectId)
-            .MaxAsync() ?? 0;
+    //     var maxLocalId = await db.TeacherSubjects
+    //         .Where(ts => ts.SchoolId == SchoolId)
+    //         .Select(ts => (int?)ts.LocalTeacherSubjectId)
+    //         .MaxAsync() ?? 0;
 
-        int newLocalId = maxLocalId + 1;
+    //     int newLocalId = maxLocalId + 1;
 
-        var teacherSubject = new TeacherSubject
-        {
-            TeacherId = teacherId,
-            SubjectId = subjectId,
-            SchoolId = SchoolId,
-            LocalTeacherSubjectId = newLocalId,
-            CreatedAt = DateTime.UtcNow
-        };
+    //     var teacherSubject = new TeacherSubject
+    //     {
+    //         TeacherId = teacherId,
+    //         SubjectId = subjectId,
+    //         SchoolId = SchoolId,
+    //         LocalTeacherSubjectId = newLocalId,
+    //         CreatedAt = DateTime.UtcNow
+    //     };
 
-        db.TeacherSubjects.Add(teacherSubject);
-        await db.SaveChangesAsync();
+    //     db.TeacherSubjects.Add(teacherSubject);
+    //     await db.SaveChangesAsync();
 
-        var teacher = await db.Employees.FindAsync(teacherId);
+    //     var teacher = await db.Employees.FindAsync(teacherId);
 
-        return Ok(new
-        {
-            message = "تم ربط المعلم بالمادة بنجاح",
-            teacherLocalNumber = request.TeacherLocalNumber,
-            teacherName = teacher?.Name,
-            localSubjectId = request.LocalSubjectId,
-            subjectName = subject.Name,
-            localTeacherSubjectId = newLocalId
-        });
-    }
+    //     return Ok(new
+    //     {
+    //         message = "تم ربط المعلم بالمادة بنجاح",
+    //         teacherLocalNumber = request.TeacherLocalNumber,
+    //         teacherName = teacher?.Name,
+    //         localSubjectId = request.LocalSubjectId,
+    //         subjectName = subject.Name,
+    //         localTeacherSubjectId = newLocalId
+    //     });
+    // }
 
     // ============================================
     // ربط المعلم بالشعبة (باستخدام Local IDs)
     // ============================================
 
-    [HttpPost("assign-teacher-to-section")]
-    public async Task<IActionResult> AssignTeacherToSection(TeacherGradeLocalRequest request)
+    // ============================================
+// ربط المعلم بالشعبة (باستخدام Local IDs)
+// ============================================
+
+[HttpPost("assign-teacher-to-section")]
+public async Task<IActionResult> AssignTeacherToSection(TeacherGradeLocalRequest request)
+{
+    var teacherSchool = await db.EmployeeSchools
+        .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
+                                   es.LocalEmployeeNumber == request.TeacherLocalNumber &&
+                                   es.Role == EmployeeRole.Teacher &&
+                                   es.IsActive);
+
+    if (teacherSchool is null)
+        return BadRequest(new { message = $"لا يوجد معلم برقم {request.TeacherLocalNumber} في هذه المدرسة" });
+
+    var subject = await db.Subjects
+        .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                  s.LocalSubjectId == request.LocalSubjectId);
+
+    if (subject is null)
+        return BadRequest(new { message = $"لا توجد مادة برقم {request.LocalSubjectId} في هذه المدرسة" });
+
+    // ✅ التحقق من وجود الصف
+    var grade = await db.Grades
+        .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                  g.LocalGradeNumber == request.LocalGradeNumber);
+
+    if (grade is null)
+        return BadRequest(new { message = $"لا يوجد صف برقم {request.LocalGradeNumber} في هذه المدرسة" });
+
+    // ✅ التحقق من وجود الشعبة في الصف المحدد
+    var section = await db.Sections
+        .Include(s => s.Grade)
+        .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
+                                  s.LocalSectionNumber == request.LocalSectionNumber &&
+                                  s.GradeId == grade.Id);
+
+    if (section is null)
+        return BadRequest(new { 
+            message = $"لا توجد شعبة برقم {request.LocalSectionNumber} في الصف {request.LocalGradeNumber}" 
+        });
+
+    var teacherId = teacherSchool.EmployeeId;
+    var subjectId = subject.Id;
+
+    // ✅ التحقق من عدم وجود ربط مكرر
+    var exists = await db.TeacherGrades
+        .AnyAsync(tg => tg.TeacherId == teacherId &&
+                       tg.SubjectId == subjectId &&
+                       tg.SectionId == section.Id);
+
+    if (exists)
+        return BadRequest(new { message = "هذا المعلم مرتبط بالفعل بهذه المادة في هذه الشعبة" });
+
+    var teacherGrade = new TeacherGrade
     {
-        var teacherSchool = await db.EmployeeSchools
-            .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
-                                       es.LocalEmployeeNumber == request.TeacherLocalNumber &&
-                                       es.Role == EmployeeRole.Teacher &&
-                                       es.IsActive);
+        TeacherId = teacherId,
+        SubjectId = subjectId,
+        SectionId = section.Id
+    };
 
-        if (teacherSchool is null)
-            return BadRequest(new { message = $"لا يوجد معلم برقم {request.TeacherLocalNumber} في هذه المدرسة" });
+    db.TeacherGrades.Add(teacherGrade);
+    await db.SaveChangesAsync();
 
-        var subject = await db.Subjects
-            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
-                                      s.LocalSubjectId == request.LocalSubjectId);
+    var teacher = await db.Employees.FindAsync(teacherId);
 
-        if (subject is null)
-            return BadRequest(new { message = $"لا توجد مادة برقم {request.LocalSubjectId} في هذه المدرسة" });
-
-        var section = await db.Sections
-            .Include(s => s.Grade)
-            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
-                                      s.LocalSectionNumber == request.LocalSectionNumber);
-
-        if (section is null)
-            return BadRequest(new { message = $"لا توجد شعبة برقم {request.LocalSectionNumber} في هذه المدرسة" });
-
-        var teacherId = teacherSchool.EmployeeId;
-        var subjectId = subject.Id;
-
-        var exists = await db.TeacherGrades
-            .AnyAsync(tg => tg.TeacherId == teacherId &&
-                           tg.SubjectId == subjectId &&
-                           tg.SectionId == section.Id);
-
-        if (exists)
-            return BadRequest(new { message = "هذا المعلم مرتبط بالفعل بهذه المادة في هذه الشعبة" });
-
-        var teacherGrade = new TeacherGrade
+    return Ok(new
+    {
+        message = "تم ربط المعلم بالشعبة بنجاح",
+        data = new
         {
-            TeacherId = teacherId,
-            SubjectId = subjectId,
-            SectionId = section.Id
-        };
-
-        db.TeacherGrades.Add(teacherGrade);
-        await db.SaveChangesAsync();
-
-        var teacher = await db.Employees.FindAsync(teacherId);
-
-        return Ok(new
-        {
-            message = "تم ربط المعلم بالشعبة بنجاح",
             teacherLocalNumber = request.TeacherLocalNumber,
             teacherName = teacher?.Name,
             localSubjectId = request.LocalSubjectId,
             subjectName = subject.Name,
-            sectionId = section.Id,
-            sectionName = section.Name,
+            localGradeNumber = request.LocalGradeNumber,
+            gradeName = grade.Name,
             localSectionNumber = section.LocalSectionNumber,
-            gradeId = section.GradeId,
-            localGradeNumber = section.Grade?.LocalGradeNumber,
-            gradeName = section.Grade?.Name
+            sectionName = section.Name,
+            sectionId = section.Id,
+            gradeId = grade.Id,
+            createdAt = DateTime.UtcNow
+        }
+    });
+}
+
+// ============================================
+// فك ربط المعلم بالشعبة (باستخدام Local IDs)
+// ============================================
+
+[HttpDelete("unassign-teacher-from-section")]
+public async Task<IActionResult> UnassignTeacherFromSection(
+    [FromQuery] int teacherLocalNumber,
+    [FromQuery] int localGradeNumber,
+    [FromQuery] int localSectionNumber,
+    [FromQuery] int localSubjectId)
+{
+    // 1. التحقق من وجود المعلم
+    var teacherSchool = await db.EmployeeSchools
+        .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
+                                   es.LocalEmployeeNumber == teacherLocalNumber &&
+                                   es.Role == EmployeeRole.Teacher &&
+                                   es.IsActive);
+
+    if (teacherSchool is null)
+        return BadRequest(new { 
+            success = false, 
+            message = $"لا يوجد معلم برقم {teacherLocalNumber} في هذه المدرسة" 
         });
-    }
 
-    // ============================================
-    // جلب مواد المعلم (باستخدام Local IDs)
-    // ============================================
+    var teacherId = teacherSchool.EmployeeId;
 
-    [HttpGet("teacher-subjects/{localTeacherNumber:int}")]
-    public async Task<IActionResult> GetTeacherSubjects(int localTeacherNumber)
+    // 2. التحقق من وجود الصف
+    var grade = await db.Grades
+        .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                  g.LocalGradeNumber == localGradeNumber);
+
+    if (grade is null)
+        return BadRequest(new { 
+            success = false, 
+            message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" 
+        });
+
+    // 3. التحقق من وجود الشعبة في الصف المحدد
+    var section = await db.Sections
+        .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
+                                  s.LocalSectionNumber == localSectionNumber &&
+                                  s.GradeId == grade.Id);
+
+    if (section is null)
+        return BadRequest(new { 
+            success = false, 
+            message = $"لا توجد شعبة برقم {localSectionNumber} في الصف {localGradeNumber}" 
+        });
+
+    // 4. التحقق من وجود المادة
+    var subject = await db.Subjects
+        .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                  s.LocalSubjectId == localSubjectId);
+
+    if (subject is null)
+        return BadRequest(new { 
+            success = false, 
+            message = $"لا توجد مادة برقم {localSubjectId} في هذه المدرسة" 
+        });
+
+    // 5. البحث عن الربط
+    var teacherGrade = await db.TeacherGrades
+        .FirstOrDefaultAsync(tg => tg.TeacherId == teacherId &&
+                                   tg.SubjectId == subject.Id &&
+                                   tg.SectionId == section.Id);
+
+    if (teacherGrade is null)
+        return NotFound(new { 
+            success = false, 
+            message = "هذا المعلم غير مرتبط بهذه المادة في هذه الشعبة" 
+        });
+
+    // 6. حذف الربط
+    db.TeacherGrades.Remove(teacherGrade);
+    await db.SaveChangesAsync();
+
+    var teacher = await db.Employees.FindAsync(teacherId);
+
+    return Ok(new
     {
-        var teacherSchool = await db.EmployeeSchools
-            .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
-                                       es.LocalEmployeeNumber == localTeacherNumber &&
-                                       es.Role == EmployeeRole.Teacher &&
-                                       es.IsActive);
-
-        if (teacherSchool is null)
-            return NotFound(new { message = $"لا يوجد معلم برقم {localTeacherNumber} في هذه المدرسة" });
-
-        var teacherId = teacherSchool.EmployeeId;
-        var teacher = await db.Employees.FindAsync(teacherId);
-
-        var teacherSubjects = await db.TeacherSubjects
-            .Include(ts => ts.Subject)
-            .Where(ts => ts.TeacherId == teacherId && ts.SchoolId == SchoolId)
-            .Select(ts => new
-            {
-                ts.Id,
-                LocalTeacherSubjectId = ts.LocalTeacherSubjectId,
-                ts.SubjectId,
-                LocalSubjectId = ts.Subject != null ? ts.Subject.LocalSubjectId : 0,
-                SubjectName = ts.Subject != null ? ts.Subject.Name : null,
-                ts.CreatedAt
-            })
-            .ToListAsync();
-
-        return Ok(new
+        success = true,
+        message = "تم فك ربط المعلم بالشعبة بنجاح",
+        data = new
         {
-            localTeacherNumber = localTeacherNumber,
-            teacherId = teacherId,
+            teacherLocalNumber = teacherLocalNumber,
             teacherName = teacher?.Name,
-            subjects = teacherSubjects,
-            totalSubjects = teacherSubjects.Count
+            localGradeNumber = localGradeNumber,
+            gradeName = grade.Name,
+            localSectionNumber = localSectionNumber,
+            sectionName = section.Name,
+            localSubjectId = localSubjectId,
+            subjectName = subject.Name,
+            deletedAt = DateTime.UtcNow
+        }
+    });
+}
+
+// ============================================
+// جلب جميع روابط المعلم في صف معين (باستخدام Local IDs)
+// ============================================
+
+[HttpGet("teacher-sections/{localTeacherNumber:int}/grade/{localGradeNumber:int}")]
+public async Task<IActionResult> GetTeacherSectionsByGrade(
+    int localTeacherNumber,
+    int localGradeNumber)
+{
+    var teacherSchool = await db.EmployeeSchools
+        .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
+                                   es.LocalEmployeeNumber == localTeacherNumber &&
+                                   es.Role == EmployeeRole.Teacher &&
+                                   es.IsActive);
+
+    if (teacherSchool is null)
+        return NotFound(new { 
+            success = false, 
+            message = $"لا يوجد معلم برقم {localTeacherNumber} في هذه المدرسة" 
         });
-    }
 
-    // ============================================
-    // جلب معلمي الشعبة (باستخدام Local IDs)
-    // ============================================
+    var teacherId = teacherSchool.EmployeeId;
+    var teacher = await db.Employees.FindAsync(teacherId);
 
-    [HttpGet("section-teachers/{localSectionNumber:int}")]
-    public async Task<IActionResult> GetSectionTeachers(int localSectionNumber)
-    {
-        var section = await db.Sections
-            .Include(s => s.Grade)
-            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
-                                      s.LocalSectionNumber == localSectionNumber);
+    var grade = await db.Grades
+        .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                  g.LocalGradeNumber == localGradeNumber);
 
-        if (section is null)
-            return NotFound(new { message = $"لا توجد شعبة برقم {localSectionNumber} في هذه المدرسة" });
+    if (grade is null)
+        return NotFound(new { 
+            success = false, 
+            message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" 
+        });
 
-        var teachers = await db.TeacherGrades
-            .Where(tg => tg.SectionId == section.Id)
-            .Select(tg => new
-            {
-                tg.TeacherId,
-                TeacherName = tg.Teacher != null ? tg.Teacher.Name : null,
-                LocalTeacherNumber = db.EmployeeSchools
-                    .Where(es => es.EmployeeId == tg.TeacherId && 
-                                 es.SchoolId == SchoolId && 
-                                 es.IsActive)
-                    .Select(es => (int?)es.LocalEmployeeNumber)
-                    .FirstOrDefault(),
-                tg.SubjectId,
-                LocalSubjectId = db.Subjects
-                    .Where(s => s.Id == tg.SubjectId)
-                    .Select(s => s.LocalSubjectId)
-                    .FirstOrDefault(),
-                SubjectName = db.Subjects
-                    .Where(s => s.Id == tg.SubjectId)
-                    .Select(s => s.Name)
-                    .FirstOrDefault(),
-                tg.CreatedAt
-            })
-            .ToListAsync();
+    // جلب جميع شعب هذا الصف
+    var sectionIds = await db.Sections
+        .Where(s => s.GradeId == grade.Id)
+        .Select(s => s.Id)
+        .ToListAsync();
 
+    if (!sectionIds.Any())
         return Ok(new
         {
-            sectionId = section.Id,
-            sectionName = section.Name,
-            localSectionNumber = section.LocalSectionNumber,
-            gradeId = section.GradeId,
-            localGradeNumber = section.Grade?.LocalGradeNumber,
-            gradeName = section.Grade?.Name,
-            teachers = teachers
+            success = true,
+            message = $"لا توجد شعب في الصف {grade.Name}",
+            data = new
+            {
+                teacherLocalNumber = localTeacherNumber,
+                teacherName = teacher?.Name,
+                localGradeNumber = localGradeNumber,
+                gradeName = grade.Name,
+                totalSections = 0,
+                sections = new List<object>()
+            }
         });
-    }
 
-    // ============================================
-    // إدارة الموظفين - باستخدام Local IDs
-    // ============================================
-    // ============================================
+    var teacherSections = await db.TeacherGrades
+        .Where(tg => tg.TeacherId == teacherId &&
+                     sectionIds.Contains(tg.SectionId))
+        .Include(tg => tg.Section)
+            .ThenInclude(s => s!.Grade)
+        .Include(tg => tg.Subject)
+        .Select(tg => new
+        {
+            tg.Id,
+            sectionId = tg.SectionId,
+            localSectionNumber = tg.Section != null ? tg.Section.LocalSectionNumber : 0,
+            sectionName = tg.Section != null ? tg.Section.Name : null,
+            subjectId = tg.SubjectId,
+            localSubjectId = tg.Subject != null ? tg.Subject.LocalSubjectId : 0,
+            subjectName = tg.Subject != null ? tg.Subject.Name : null,
+            tg.CreatedAt
+        })
+        .ToListAsync();
+
+    return Ok(new
+    {
+        success = true,
+        message = $"تم جلب شعب المعلم في الصف {grade.Name} بنجاح",
+        data = new
+        {
+            teacherLocalNumber = localTeacherNumber,
+            teacherName = teacher?.Name,
+            localGradeNumber = localGradeNumber,
+            gradeName = grade.Name,
+            totalSections = teacherSections.Count,
+            sections = teacherSections
+        }
+    });
+}
+
+// ============================================
+// جلب جميع شعب الصف مع معلميها (باستخدام Local IDs)
+// ============================================
+
+[HttpGet("grade-sections-with-teachers/{localGradeNumber:int}")]
+public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumber)
+{
+    var grade = await db.Grades
+        .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                  g.LocalGradeNumber == localGradeNumber);
+
+    if (grade is null)
+        return NotFound(new { 
+            success = false, 
+            message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" 
+        });
+
+    var sections = await db.Sections
+        .Where(s => s.GradeId == grade.Id)
+        .OrderBy(s => s.LocalSectionNumber)
+        .Select(s => new
+        {
+            s.Id,
+            s.Name,
+            s.LocalSectionNumber,
+            Teachers = db.TeacherGrades
+                .Where(tg => tg.SectionId == s.Id)
+                .Select(tg => new
+                {
+                    tg.TeacherId,
+                    TeacherName = tg.Teacher != null ? tg.Teacher.Name : null,
+                    LocalTeacherNumber = db.EmployeeSchools
+                        .Where(es => es.EmployeeId == tg.TeacherId && 
+                                     es.SchoolId == SchoolId && 
+                                     es.IsActive)
+                        .Select(es => (int?)es.LocalEmployeeNumber)
+                        .FirstOrDefault(),
+                    tg.SubjectId,
+                    LocalSubjectId = tg.Subject != null ? tg.Subject.LocalSubjectId : 0,
+                    SubjectName = tg.Subject != null ? tg.Subject.Name : null,
+                    tg.CreatedAt
+                })
+                .ToList()
+        })
+        .ToListAsync();
+
+    return Ok(new
+    {
+        success = true,
+        message = $"تم جلب شعب الصف {grade.Name} مع معلميها بنجاح",
+        data = new
+        {
+            localGradeNumber = grade.LocalGradeNumber,
+            gradeName = grade.Name,
+            totalSections = sections.Count,
+            sections = sections
+        }
+    });
+}
+
+
     // إدارة الموظفين - إنشاء، تحديث، حذف (باستخدام Local IDs)
     // ============================================
 
