@@ -273,79 +273,209 @@ public async Task<IActionResult> UpdateGrade(int localGradeNumber, GradeRequest 
 }
 
     [HttpDelete("grades/{localGradeNumber:int}")]
-    public async Task<IActionResult> DeleteGrade(int localGradeNumber)
+public async Task<IActionResult> DeleteGrade(int localGradeNumber)
+{
+    var grade = await db.Grades
+        .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                  g.LocalGradeNumber == localGradeNumber);
+
+    if (grade is null)
+        return NotFound(new { message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" });
+
+    // ✅ 1. جلب جميع الشعب في هذا الصف
+    var sections = await db.Sections
+        .Include(s => s.TeacherGrades)
+        .Include(s => s.Students)
+        .Where(s => s.GradeId == grade.Id)
+        .ToListAsync();
+
+    // ✅ 2. جلب جميع الطلاب في هذه الشعب
+    var studentIds = sections
+        .SelectMany(s => s.Students ?? new List<Student>())
+        .Select(s => s.Id)
+        .ToList();
+
+    // ✅ 3. حذف العلامات (Marks) المرتبطة بالطلاب
+    if (studentIds.Any())
     {
-        var grade = await db.Grades
-            .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
-                                      g.LocalGradeNumber == localGradeNumber);
-
-        if (grade is null)
-            return NotFound(new { message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" });
-
-        var sections = await db.Sections
-            .Include(s => s.TeacherGrades)
-            .Include(s => s.Students)
-            .Where(s => s.GradeId == grade.Id)
+        var marks = await db.Marks
+            .Where(m => studentIds.Contains(m.StudentId))
             .ToListAsync();
 
-        var allTeacherGrades = sections
-            .SelectMany(s => s.TeacherGrades ?? new List<TeacherGrade>())
-            .ToList();
+        if (marks.Any())
+            db.Marks.RemoveRange(marks);
+    }
 
-        if (allTeacherGrades.Any())
-            db.TeacherGrades.RemoveRange(allTeacherGrades);
+    // ✅ 4. حذف ActivityRegistrations المرتبطة بالطلاب
+    if (studentIds.Any())
+    {
+        var activityRegistrations = await db.ActivityRegistrations
+            .Where(r => studentIds.Contains(r.StudentId))
+            .ToListAsync();
 
-        var subjectIds = allTeacherGrades
-            .Select(tg => tg.SubjectId)
-            .Distinct()
-            .ToList();
+        if (activityRegistrations.Any())
+            db.ActivityRegistrations.RemoveRange(activityRegistrations);
+    }
 
-        foreach (var subjectId in subjectIds)
+    // ✅ 5. حذف TeacherGrades المرتبطة بالشعب
+    var allTeacherGrades = sections
+        .SelectMany(s => s.TeacherGrades ?? new List<TeacherGrade>())
+        .ToList();
+
+    if (allTeacherGrades.Any())
+        db.TeacherGrades.RemoveRange(allTeacherGrades);
+
+    // ✅ 6. حذف SubjectIds المرتبطة (إذا لم تعد مستخدمة)
+    var subjectIds = allTeacherGrades
+        .Select(tg => tg.SubjectId)
+        .Distinct()
+        .ToList();
+
+    foreach (var subjectId in subjectIds)
+    {
+        var hasOtherGrades = await db.TeacherGrades
+            .AnyAsync(tg => tg.SubjectId == subjectId);
+
+        if (!hasOtherGrades)
         {
-            var hasOtherGrades = await db.TeacherGrades
-                .AnyAsync(tg => tg.SubjectId == subjectId);
+            var subject = await db.Subjects
+                .FirstOrDefaultAsync(s => s.Id == subjectId && s.SchoolId == SchoolId);
 
-            if (!hasOtherGrades)
+            if (subject is not null)
             {
-                var subject = await db.Subjects
-                    .FirstOrDefaultAsync(s => s.Id == subjectId && s.SchoolId == SchoolId);
+                var teacherSubjects = await db.TeacherSubjects
+                    .Where(ts => ts.SubjectId == subjectId)
+                    .ToListAsync();
 
-                if (subject is not null)
-                {
-                    var teacherSubjects = await db.TeacherSubjects
-                        .Where(ts => ts.SubjectId == subjectId)
-                        .ToListAsync();
+                if (teacherSubjects.Any())
+                    db.TeacherSubjects.RemoveRange(teacherSubjects);
 
-                    if (teacherSubjects.Any())
-                        db.TeacherSubjects.RemoveRange(teacherSubjects);
-
-                    db.Subjects.Remove(subject);
-                }
+                db.Subjects.Remove(subject);
             }
         }
-
-        foreach (var section in sections)
-        {
-            if (section.Students != null && section.Students.Any())
-                db.Students.RemoveRange(section.Students);
-        }
-
-        if (sections.Any())
-            db.Sections.RemoveRange(sections);
-
-        db.Grades.Remove(grade);
-        await db.SaveChangesAsync();
-
-        return Ok(new
-        {
-            message = "تم حذف الصف وجميع البيانات المرتبطة بنجاح",
-            localGradeNumber = localGradeNumber,
-            gradeName = grade.Name,
-            deletedSections = sections.Count,
-            deletedTeacherGrades = allTeacherGrades.Count,
-            deletedSubjects = subjectIds.Count
-        });
     }
+
+    // ✅ 7. حذف BookLoans و BookReservations للطلاب
+    if (studentIds.Any())
+    {
+        var bookLoans = await db.BookLoans
+            .Where(l => studentIds.Contains(l.StudentId))
+            .ToListAsync();
+
+        if (bookLoans.Any())
+            db.BookLoans.RemoveRange(bookLoans);
+
+        var bookReservations = await db.BookReservations
+            .Where(r => studentIds.Contains(r.StudentId))
+            .ToListAsync();
+
+        if (bookReservations.Any())
+            db.BookReservations.RemoveRange(bookReservations);
+    }
+
+    // ✅ 8. حذف StudentGradeHistory للطلاب
+    if (studentIds.Any())
+    {
+        var gradeHistory = await db.StudentGradeHistory
+            .Where(h => studentIds.Contains(h.StudentId))
+            .ToListAsync();
+
+        if (gradeHistory.Any())
+            db.StudentGradeHistory.RemoveRange(gradeHistory);
+    }
+
+    // ✅ 9. حذف StudentAttendances للطلاب
+    if (studentIds.Any())
+    {
+        var attendances = await db.StudentAttendances
+            .Where(a => studentIds.Contains(a.StudentId))
+            .ToListAsync();
+
+        if (attendances.Any())
+            db.StudentAttendances.RemoveRange(attendances);
+    }
+
+    // ✅ 10. حذف Warnings للطلاب
+    if (studentIds.Any())
+    {
+        var warnings = await db.Warnings
+            .Where(w => studentIds.Contains(w.StudentId))
+            .ToListAsync();
+
+        if (warnings.Any())
+            db.Warnings.RemoveRange(warnings);
+    }
+
+    // ✅ 11. حذف Punishments للطلاب
+    // if (studentIds.Any())
+    // {
+    //     var punishments = await db.Punishments
+    //         .Where(p => studentIds.Contains(p.StudentId))
+    //         .ToListAsync();
+
+    //     if (punishments.Any())
+    //         db.Punishments.RemoveRange(punishments);
+    // }
+
+    // ✅ 12. حذف GuardianSummons للطلاب
+    if (studentIds.Any())
+    {
+        var summons = await db.GuardianSummons
+            .Where(s => studentIds.Contains(s.StudentId))
+            .ToListAsync();
+
+        if (summons.Any())
+            db.GuardianSummons.RemoveRange(summons);
+    }
+
+    // ✅ 13. حذف Notifications للطلاب
+    if (studentIds.Any())
+    {
+        var notifications = await db.Notifications
+            .Where(n => studentIds.Contains(n.UserId) && n.UserType == UserType.Student)
+            .ToListAsync();
+
+        if (notifications.Any())
+            db.Notifications.RemoveRange(notifications);
+    }
+
+    // ✅ 14. حذف Complaints للطلاب
+    if (studentIds.Any())
+    {
+        var complaints = await db.Complaints
+            .Where(c => studentIds.Contains(c.FromUserId) && c.FromUserType == UserType.Student)
+            .ToListAsync();
+
+        if (complaints.Any())
+            db.Complaints.RemoveRange(complaints);
+    }
+
+    // ✅ 15. حذف الطلاب
+    foreach (var section in sections)
+    {
+        if (section.Students != null && section.Students.Any())
+            db.Students.RemoveRange(section.Students);
+    }
+
+    // ✅ 16. حذف الشعب
+    if (sections.Any())
+        db.Sections.RemoveRange(sections);
+
+    // ✅ 17. حذف الصف
+    db.Grades.Remove(grade);
+    await db.SaveChangesAsync();
+
+    return Ok(new
+    {
+        message = "تم حذف الصف وجميع البيانات المرتبطة بنجاح",
+        localGradeNumber = localGradeNumber,
+        gradeName = grade.Name,
+        deletedSections = sections.Count,
+        deletedTeacherGrades = allTeacherGrades.Count,
+        deletedStudents = studentIds.Count,
+        deletedSubjects = subjectIds.Count
+    });
+}
 
 
     // ============================================
@@ -2080,56 +2210,64 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
         });
     }
 
-    [HttpGet("teachers")]
-    public async Task<IActionResult> GetTeachers()
-    {
-        var teachers = await db.EmployeeSchools
-            .Where(es => es.SchoolId == SchoolId && es.IsActive && es.Role == EmployeeRole.Teacher)
-            .Include(es => es.Employee)
-            .OrderBy(es => es.LocalEmployeeNumber)
-            .Select(es => new
-            {
-                es.LocalEmployeeNumber,
-                es.EmployeeId,
-                es.Employee!.Name,
-                es.Employee.Email,
-                es.Employee.NationalId,
-                es.Employee.Phone,
-                es.Employee.Address,
-                es.Employee.BirthDate,
-                es.Role,
-                RoleName = GetRoleName(es.Role),
-                es.IsActive,
-                es.CreatedAt,
-                
-                // ✅ Get subjects assigned to this teacher
-                Subjects = db.TeacherSubjects
-                    .Where(ts => ts.TeacherId == es.EmployeeId)
-                    .Select(ts => new
-                    {
-                        ts.SubjectId,
-                        SubjectName = ts.Subject != null ? ts.Subject.Name : null,
-                        ts.Subject!.LocalSubjectId
-                    })
-                    .ToList(),
-                
-                // ✅ Get sections assigned to this teacher
-                Sections = db.TeacherGrades
-                    .Where(tg => tg.TeacherId == es.EmployeeId)
-                    .Select(tg => new
-                    {
-                        tg.SectionId,
-                        SectionName = tg.Section != null ? tg.Section.Name : null,
-                        tg.Section!.LocalSectionNumber,
-                        GradeName = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.Name : null,
-                        LocalGradeNumber = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.LocalGradeNumber : 0
-                    })
-                    .ToList()
-            })
-            .ToListAsync();
+        [HttpGet("teachers")]
+public async Task<IActionResult> GetTeachers()
+{
+    var teachers = await db.EmployeeSchools
+        .Where(es => es.SchoolId == SchoolId && es.IsActive && es.Role == EmployeeRole.Teacher)
+        .Include(es => es.Employee)
+        .OrderBy(es => es.LocalEmployeeNumber)
+        .Select(es => new
+        {
+            es.LocalEmployeeNumber,
+            es.EmployeeId,
+            es.Employee!.Name,
+            es.Employee.Email,
+            es.Employee.NationalId,
+            es.Employee.Phone,
+            es.Employee.Address,
+            es.Employee.BirthDate,
+            es.Role,
+            RoleName = GetRoleName(es.Role),
+            es.IsActive,
+            es.CreatedAt,
+            
+            // ✅ Get subjects assigned to this teacher from TeacherGrades
+            Subjects = db.TeacherGrades
+                .Where(tg => tg.TeacherId == es.EmployeeId)
+                .Select(tg => new
+                {
+                    tg.SubjectId,
+                    SubjectName = tg.Subject != null ? tg.Subject.Name : null,
+                    LocalSubjectId = tg.Subject != null ? tg.Subject.LocalSubjectId : 0,
+                    SectionId = tg.SectionId,
+                    SectionName = tg.Section != null ? tg.Section.Name : null,
+                    LocalSectionNumber = tg.Section != null ? tg.Section.LocalSectionNumber : 0,
+                    GradeName = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.Name : null,
+                    LocalGradeNumber = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.LocalGradeNumber : 0
+                })
+                .ToList(),
+            
+            // ✅ Get sections assigned to this teacher (grouped by subject)
+            Sections = db.TeacherGrades
+                .Where(tg => tg.TeacherId == es.EmployeeId)
+                .Select(tg => new
+                {
+                    tg.SectionId,
+                    SectionName = tg.Section != null ? tg.Section.Name : null,
+                    tg.Section!.LocalSectionNumber,
+                    GradeName = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.Name : null,
+                    LocalGradeNumber = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.LocalGradeNumber : 0,
+                    SubjectId = tg.SubjectId,
+                    SubjectName = tg.Subject != null ? tg.Subject.Name : null,
+                    LocalSubjectId = tg.Subject != null ? tg.Subject.LocalSubjectId : 0
+                })
+                .ToList()
+        })
+        .ToListAsync();
 
-        return Ok(teachers);
-    }
+    return Ok(teachers);
+}
 
     [HttpGet("employees")]
     public async Task<IActionResult> GetEmployees()

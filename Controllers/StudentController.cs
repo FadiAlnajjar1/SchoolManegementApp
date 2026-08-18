@@ -434,59 +434,58 @@ public class StudentController(AppDbContext db, NotificationService notifier) : 
         });
     }
 
-    [HttpPost("activities/{localActivityId:int}/register")]
-    public async Task<IActionResult> RegisterActivity(int localActivityId)
+    [HttpPost("activities/{activityId:int}/register")]
+public async Task<IActionResult> RegisterActivity(int activityId)
+{
+    // البحث عن النشاط باستخدام activityId الأساسي
+    var activity = await db.Activities
+        .FirstOrDefaultAsync(a => a.SchoolId == SchoolId && 
+                                  a.Id == activityId);  // 🔄 تغيير هنا
+        
+    if (activity is null) 
+        return NotFound(new { success = false, message = "النشاط غير موجود" });
+
+    var existingRegistration = await db.ActivityRegistrations
+        .FirstOrDefaultAsync(r => r.ActivityId == activity.Id && r.StudentId == StudentId);
+
+    if (existingRegistration is not null)
     {
-        var activity = await db.Activities
-            .FirstOrDefaultAsync(a => a.SchoolId == SchoolId && 
-                                      a.LocalActivityId == localActivityId);
-            
-        if (activity is null) 
-            return NotFound(new { success = false, message = "النشاط غير موجود" });
-
-        var existingRegistration = await db.ActivityRegistrations
-            .FirstOrDefaultAsync(r => r.ActivityId == activity.Id && r.StudentId == StudentId);
-
-        if (existingRegistration is not null)
-        {
-            if (existingRegistration.Status == RegistrationStatus.Approved)
-                return BadRequest(new { success = false, message = "أنت مسجل في هذا النشاط بالفعل" });
-            if (existingRegistration.Status == RegistrationStatus.Pending)
-                return BadRequest(new { success = false, message = "طلب التسجيل قيد المراجعة" });
-        }
-
-        var approved = await db.ActivityRegistrations
-            .CountAsync(r => r.ActivityId == activity.Id && r.Status == RegistrationStatus.Approved);
-            
-
-        var registration = new ActivityRegistration 
-        { 
-            ActivityId = activity.Id, 
-            StudentId = StudentId,
-            Status = RegistrationStatus.Pending,
-            RejectionReason = string.Empty,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        db.ActivityRegistrations.Add(registration);
-        await db.SaveChangesAsync();
-
-        return Created($"api/student/activities/{localActivityId}/register", new
-        {
-            success = true,
-            message = "تم التسجيل في النشاط بنجاح",
-            data = new
-            {
-                registration.Id,
-                ActivityLocalId = localActivityId,
-                registration.ActivityId,
-                registration.StudentId,
-                registration.Status,
-                StatusName = registration.Status.ToString(),
-                registration.CreatedAt
-            }
-        });
+        if (existingRegistration.Status == RegistrationStatus.Approved)
+            return BadRequest(new { success = false, message = "أنت مسجل في هذا النشاط بالفعل" });
+        if (existingRegistration.Status == RegistrationStatus.Pending)
+            return BadRequest(new { success = false, message = "طلب التسجيل قيد المراجعة" });
     }
+
+    var approved = await db.ActivityRegistrations
+        .CountAsync(r => r.ActivityId == activity.Id && r.Status == RegistrationStatus.Approved);
+
+    var registration = new ActivityRegistration 
+    { 
+        ActivityId = activity.Id, 
+        StudentId = StudentId,
+        Status = RegistrationStatus.Pending,
+        RejectionReason = string.Empty,
+        CreatedAt = DateTime.UtcNow
+    };
+
+    db.ActivityRegistrations.Add(registration);
+    await db.SaveChangesAsync();
+
+    return Created($"api/student/activities/{activityId}/register", new  // 🔄 تغيير هنا
+    {
+        success = true,
+        message = "تم التسجيل في النشاط بنجاح",
+        data = new
+        {
+            registration.Id,
+            ActivityId = activityId,  // 🔄 تغيير هنا
+            registration.StudentId,
+            registration.Status,
+            StatusName = registration.Status.ToString(),
+            registration.CreatedAt
+        }
+    });
+}
 
     [HttpGet("activities/registrations")]
     public async Task<IActionResult> GetMyRegistrations()
@@ -515,8 +514,8 @@ public class StudentController(AppDbContext db, NotificationService notifier) : 
         });
     }
 
-    [HttpDelete("activities/registrations/{localActivityId:int}")]
-public async Task<IActionResult> CancelRegistration(int localActivityId)
+    [HttpDelete("activities/registrations/{activityId:int}")]
+public async Task<IActionResult> CancelRegistration(int activityId)
 {
     // 1. الحصول على StudentId من الـ Token
     var studentId = User.GetUserId();
@@ -533,13 +532,13 @@ public async Task<IActionResult> CancelRegistration(int localActivityId)
     if (student is null)
         return NotFound(new { success = false, message = "الطالب غير موجود في هذه المدرسة" });
 
-    // 3. التحقق من وجود النشاط
+    // 3. التحقق من وجود النشاط (باستخدام activityId الأساسي)
     var activity = await db.Activities
         .FirstOrDefaultAsync(a => a.SchoolId == SchoolId && 
-                                  a.LocalActivityId == localActivityId);
+                                  a.Id == activityId);  // 🔄 تغيير هنا
 
     if (activity is null)
-        return NotFound(new { success = false, message = $"لا يوجد نشاط برقم {localActivityId}" });
+        return NotFound(new { success = false, message = $"لا يوجد نشاط بهذا المعرف" });
 
     // 4. البحث عن التسجيل
     var registration = await db.ActivityRegistrations
@@ -576,7 +575,7 @@ public async Task<IActionResult> CancelRegistration(int localActivityId)
         message = "تم إلغاء التسجيل بنجاح",
         data = new
         {
-            ActivityLocalId = localActivityId,
+            ActivityId = activityId,  // 🔄 تغيير هنا
             ActivityName = activity.Title,
             StudentLocalNumber = student.LocalStudentNumber,
             StudentName = student.Name
@@ -649,6 +648,13 @@ public async Task<IActionResult> GetBook(int localBookNumber)
 [HttpPost("library/books/{localBookNumber:int}/reserve")]
 public async Task<IActionResult> ReserveBook(int localBookNumber)
 {
+    // 1. الحصول على StudentId من الـ Token
+    var studentId = User.GetUserId();
+    
+    if (studentId <= 0)
+        return Unauthorized(new { success = false, message = "الطالب غير مسجل الدخول" });
+
+    // 2. البحث عن الكتاب
     var book = await db.Books
         .FirstOrDefaultAsync(b => b.SchoolId == SchoolId && 
                                   b.LocalBookNumber == localBookNumber);
@@ -656,7 +662,7 @@ public async Task<IActionResult> ReserveBook(int localBookNumber)
     if (book is null) 
         return NotFound(new { success = false, message = $"لا يوجد كتاب برقم {localBookNumber} في المكتبة" });
 
-    // ✅ التحقق من وجود نسخ متاحة للحجز
+    // 3. التحقق من وجود نسخ متاحة للحجز
     var availableForLoan = book.AvailableCopies - book.ReservedCopies;
     if (availableForLoan <= 0)
         return BadRequest(new { 
@@ -664,22 +670,10 @@ public async Task<IActionResult> ReserveBook(int localBookNumber)
             message = "لا توجد نسخ متاحة من هذا الكتاب حالياً" 
         });
 
-    // التحقق من وجود حجز معلق
-    var existingReservation = await db.BookReservations
-        .FirstOrDefaultAsync(r => r.BookId == book.Id && 
-                                  r.StudentId == StudentId && 
-                                  (r.Status == ReservationStatus.Pending || r.Status == ReservationStatus.Approved));
-                              
-    if (existingReservation is not null)
-        return BadRequest(new { 
-            success = false, 
-            message = "لديك طلب حجز معلق أو موافق عليه على هذا الكتاب" 
-        });
-
-    // التحقق من وجود إعارة نشطة
+    // 4. التحقق من وجود إعارة نشطة
     var activeLoan = await db.BookLoans
         .AnyAsync(l => l.BookId == book.Id && 
-                      l.StudentId == StudentId && 
+                      l.StudentId == studentId && 
                       l.Status == LoanStatus.Active);
 
     if (activeLoan)
@@ -688,16 +682,42 @@ public async Task<IActionResult> ReserveBook(int localBookNumber)
             message = "الكتاب مستعار من قبلك بالفعل" 
         });
 
-    // ❌ لا نزيد ReservedCopies هنا (لأن الحجز ما زال Pending)
-    // book.ReservedCopies++;
+    // 5. التحقق من وجود أي حجز سابق
+    var existingReservation = await db.BookReservations
+        .FirstOrDefaultAsync(r => r.BookId == book.Id && 
+                                  r.StudentId == studentId);
 
-    // إنشاء طلب حجز (Pending)
+    if (existingReservation is not null)
+    {
+        if (existingReservation.Status == ReservationStatus.Pending)
+        {
+            return BadRequest(new { 
+                success = false, 
+                message = "لديك طلب حجز معلق على هذا الكتاب، يرجى الانتظار حتى يتم الرد عليه" 
+            });
+        }
+        
+        if (existingReservation.Status == ReservationStatus.Approved)
+        {
+            return BadRequest(new { 
+                success = false, 
+                message = "تمت الموافقة على حجزك لهذا الكتاب مسبقاً، يمكنك استعارته" 
+            });
+        }
+
+        // Expired أو Cancelled: حذف الحجز القديم
+        db.BookReservations.Remove(existingReservation);
+        await db.SaveChangesAsync();
+    }
+
+    // 6. إنشاء طلب حجز جديد (Pending)
     var reservation = new BookReservation
     {
         BookId = book.Id,
-        StudentId = StudentId,
+        StudentId = studentId,
         Date = DateOnly.FromDateTime(DateTime.Today),
-        ExpiryDate = DateOnly.FromDateTime(DateTime.Today.AddDays(7)),
+        // ✅ لا نحدد ExpiryDate هنا (يبقى null حتى يتم القبول)
+        ExpiryDate = null, // سيتم تحديده عند القبول
         Status = ReservationStatus.Pending,
         CreatedAt = DateTime.UtcNow
     };
@@ -705,13 +725,13 @@ public async Task<IActionResult> ReserveBook(int localBookNumber)
     db.BookReservations.Add(reservation);
     await db.SaveChangesAsync();
 
-    // جلب اسم الطالب
+    // 7. جلب اسم الطالب
     var studentName = await db.Students
-        .Where(s => s.Id == StudentId)
+        .Where(s => s.Id == studentId)
         .Select(s => s.Name)
         .FirstOrDefaultAsync() ?? "طالب";
 
-    // إشعار لأمين المكتبة
+    // 8. إشعار لأمين المكتبة
     await notifier.SendToLibrarianAsync(
         SchoolId,
         "طلب حجز كتاب جديد",
@@ -729,7 +749,7 @@ public async Task<IActionResult> ReserveBook(int localBookNumber)
             BookTitle = book.Title,
             BookAuthor = book.Author,
             reservation.Date,
-            reservation.ExpiryDate,
+            reservation.ExpiryDate, // null
             reservation.Status,
             StatusName = "Pending",
             StatusArabic = "قيد الانتظار",

@@ -76,6 +76,68 @@ public class SecretaryController(
         });
     }
 
+    // ============================================
+// جلب جميع الصفوف مع الشعب التابعة لها (نفس تنسيق Manager)
+// ============================================
+
+[HttpGet("grades")]
+public async Task<IActionResult> GetGradesWithSections()
+{
+    var grades = await db.Grades
+        .Include(g => g.Sections)
+        .Where(g => g.SchoolId == SchoolId)
+        .OrderBy(g => g.Level)
+        .Select(g => new
+        {
+            g.Id,
+            g.Name,
+            g.LocalGradeNumber,
+            g.Level,
+            g.IsActive,
+            g.SchoolId,
+            g.CreatedAt,
+            Sections = g.Sections
+                .OrderBy(s => s.LocalSectionNumber)
+                .Select(s => new
+                {
+                    s.Id,
+                    s.Name,
+                    s.LocalSectionNumber,
+                    s.CounselorId,
+                    LocalCounselorNumber = db.EmployeeSchools
+                        .Where(es => es.EmployeeId == s.CounselorId && 
+                                     es.SchoolId == SchoolId && 
+                                     es.IsActive)
+                        .Select(es => (int?)es.LocalEmployeeNumber)
+                        .FirstOrDefault(),
+                    CounselorName = s.Counselor != null ? s.Counselor.Name : null,
+                    Teachers = db.TeacherGrades
+                        .Where(tg => tg.SectionId == s.Id)
+                        .Select(tg => new
+                        {
+                            tg.TeacherId,
+                            TeacherName = tg.Teacher != null ? tg.Teacher.Name : null,
+                            LocalTeacherNumber = db.EmployeeSchools
+                                .Where(es => es.EmployeeId == tg.TeacherId && 
+                                             es.SchoolId == SchoolId && 
+                                             es.IsActive)
+                                .Select(es => (int?)es.LocalEmployeeNumber)
+                                .FirstOrDefault(),
+                            tg.SubjectId,
+                            LocalSubjectId = db.Subjects
+                                .Where(sub => sub.Id == tg.SubjectId)
+                                .Select(sub => sub.LocalSubjectId)
+                                .FirstOrDefault(),
+                            SubjectName = tg.Subject != null ? tg.Subject.Name : null
+                        })
+                        .ToList()
+                }).ToList()
+        })
+        .ToListAsync();
+
+    return Ok(grades);
+}
+
     [HttpGet("announcements")]
     public async Task<IActionResult> GetAnnouncements()
     {
@@ -279,124 +341,125 @@ public class SecretaryController(
         });
     }
 
-    [HttpPost("students")]
-    public async Task<IActionResult> CreateStudent(StudentCreateRequest request)
+   [HttpPost("students")]
+public async Task<IActionResult> CreateStudent(StudentCreateRequest request)
+{
+    var school = await db.Schools.FindAsync(SchoolId);
+    if (school is null)
+        return BadRequest(new { success = false, message = "المدرسة غير موجودة" });
+
+    // ✅ التحقق من وجود البريد الإلكتروني
+    if (await db.Students.AnyAsync(s => s.Email == request.Email && s.SchoolId == SchoolId))
+        return BadRequest(new { success = false, message = "البريد الإلكتروني موجود مسبقاً" });
+
+    // ✅ التحقق من العمر (يجب أن يكون الطالب أكبر من 5 سنوات)
+    if (request.BirthDate.HasValue)
     {
-        var school = await db.Schools.FindAsync(SchoolId);
-        if (school is null)
-            return BadRequest(new { success = false, message = "المدرسة غير موجودة" });
-
-        // ✅ التحقق من وجود البريد الإلكتروني
-        if (await db.Students.AnyAsync(s => s.Email == request.Email && s.SchoolId == SchoolId))
-            return BadRequest(new { success = false, message = "البريد الإلكتروني موجود مسبقاً" });
-
-        // ✅ التحقق من العمر (يجب أن يكون الطالب أكبر من 5 سنوات)
-        if (request.BirthDate.HasValue)
-        {
-            var age = CalculateAge(request.BirthDate.Value);
-            if (age < 5)
-                return BadRequest(new { success = false, message = "عمر الطالب يجب أن يكون 5 سنوات على الأقل" });
-        }
-        else
-        {
-            return BadRequest(new { success = false, message = "تاريخ الميلاد مطلوب" });
-        }
-
-        // ✅ التحقق من وجود الصف باستخدام LocalGradeNumber
-        Grade? grade = null;
-        if (request.LocalGradeNumber.HasValue)
-        {
-            grade = await db.Grades
-                .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
-                                          g.LocalGradeNumber == request.LocalGradeNumber.Value);
-            
-            if (grade is null)
-                return BadRequest(new { success = false, message = $"لا يوجد صف برقم {request.LocalGradeNumber} في هذه المدرسة" });
-        }
-
-        // ✅ التحقق من وجود الشعبة باستخدام LocalSectionNumber (اختياري)
-        Section? section = null;
-        if (request.LocalSectionNumber.HasValue)
-        {
-            section = await db.Sections
-                .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
-                                          s.LocalSectionNumber == request.LocalSectionNumber.Value);
-            
-            if (section is null)
-                return BadRequest(new { success = false, message = $"لا توجد شعبة برقم {request.LocalSectionNumber} في هذه المدرسة" });
-
-            // ✅ التأكد من أن الشعبة تابعة للصف المحدد
-            if (grade != null && section.GradeId != grade.Id)
-                return BadRequest(new { success = false, message = "الشعبة غير تابعة للصف المحدد" });
-        }
-
-        // ✅ حساب LocalStudentNumber
-        var maxLocalNumber = await db.Students
-            .Where(s => s.SchoolId == SchoolId)
-            .Select(s => (int?)s.LocalStudentNumber)
-            .MaxAsync() ?? 0;
-
-        int newLocalNumber = maxLocalNumber + 1;
-
-        var student = new Student
-        {
-            Name = request.Name,
-            Email = request.Email,
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
-            SchoolId = SchoolId,
-            LocalStudentNumber = newLocalNumber,
-            SectionId = section?.Id,
-            GuardianName = request.GuardianName ?? "",
-            GuardianPhone = request.GuardianPhone ?? "",
-            BloodType = request.BloodType ?? "",
-            ChronicDiseases = request.ChronicDiseases ?? "",
-            Allergies = request.Allergies ?? "",
-            HealthNotes = request.HealthNotes ?? "",
-            BirthDate = request.BirthDate,
-            Address = request.Address ?? "",
-            CreatedAt = DateTime.UtcNow
-        };
-
-        db.Students.Add(student);
-        await db.SaveChangesAsync();
-
-        // ✅ إرسال إشعار للطالب
-        var gradeName = grade?.Name ?? "غير محدد";
-        var sectionName = section?.Name ?? "غير محدد";
-        await notifier.SendAsync(
-            student.Id,
-            UserType.Student,
-            "مرحباً في المدرسة",
-            $"تم تسجيلك في مدرسة '{school.Name}' - الصف: {gradeName} - الشعبة: {sectionName} برقم طالب {newLocalNumber}",
-            "registration"
-        );
-
-        return Created($"api/secretary/students/{newLocalNumber}", new
-        {
-            success = true,
-            message = "تم إنشاء الطالب بنجاح",
-            data = new
-            {
-                student.Id,
-                student.Name,
-                student.Email,
-                student.LocalStudentNumber,
-                student.SchoolId,
-                SchoolName = school.Name,
-                SectionId = student.SectionId,
-                LocalSectionNumber = section?.LocalSectionNumber,
-                SectionName = section?.Name,
-                LocalGradeNumber = grade?.LocalGradeNumber,
-                GradeName = grade?.Name,
-                student.BirthDate,
-                Age = CalculateAge(student.BirthDate.Value),
-                student.Address,
-                student.GuardianName,
-                student.GuardianPhone,
-                student.CreatedAt
-            }
-        });
+        var age = CalculateAge(request.BirthDate.Value);
+        if (age < 5)
+            return BadRequest(new { success = false, message = "عمر الطالب يجب أن يكون 5 سنوات على الأقل" });
     }
+    else
+    {
+        return BadRequest(new { success = false, message = "تاريخ الميلاد مطلوب" });
+    }
+
+    // ✅ التحقق من وجود الصف باستخدام LocalGradeNumber
+    Grade? grade = null;
+    if (request.LocalGradeNumber.HasValue)
+    {
+        grade = await db.Grades
+            .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                      g.LocalGradeNumber == request.LocalGradeNumber.Value);
+        
+        if (grade is null)
+            return BadRequest(new { success = false, message = $"لا يوجد صف برقم {request.LocalGradeNumber} في هذه المدرسة" });
+    }
+
+    // ✅ التحقق من وجود الشعبة باستخدام LocalSectionNumber
+    Section? section = null;
+    if (request.LocalSectionNumber.HasValue)
+    {
+        // 🔥 FIX: البحث عن الشعبة في الصف المحدد فقط
+        section = await db.Sections
+            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
+                                      s.LocalSectionNumber == request.LocalSectionNumber.Value &&
+                                      s.GradeId == grade.Id); // <- تأكد من أن الشعبة تابعة للصف المحدد
+        
+        if (section is null)
+            return BadRequest(new { 
+                success = false, 
+                message = $"لا توجد شعبة برقم {request.LocalSectionNumber} في الصف {grade?.Name}" 
+            });
+    }
+
+    // ✅ حساب LocalStudentNumber
+    var maxLocalNumber = await db.Students
+        .Where(s => s.SchoolId == SchoolId)
+        .Select(s => (int?)s.LocalStudentNumber)
+        .MaxAsync() ?? 0;
+
+    int newLocalNumber = maxLocalNumber + 1;
+
+    var student = new Student
+    {
+        Name = request.Name,
+        Email = request.Email,
+        PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+        SchoolId = SchoolId,
+        LocalStudentNumber = newLocalNumber,
+        SectionId = section?.Id,
+        GuardianName = request.GuardianName ?? "",
+        GuardianPhone = request.GuardianPhone ?? "",
+        BloodType = request.BloodType ?? "",
+        ChronicDiseases = request.ChronicDiseases ?? "",
+        Allergies = request.Allergies ?? "",
+        HealthNotes = request.HealthNotes ?? "",
+        BirthDate = request.BirthDate,
+        Address = request.Address ?? "",
+        CreatedAt = DateTime.UtcNow
+    };
+
+    db.Students.Add(student);
+    await db.SaveChangesAsync();
+
+    // ✅ إرسال إشعار للطالب
+    var gradeName = grade?.Name ?? "غير محدد";
+    var sectionName = section?.Name ?? "غير محدد";
+    await notifier.SendAsync(
+        student.Id,
+        UserType.Student,
+        "مرحباً في المدرسة",
+        $"تم تسجيلك في مدرسة '{school.Name}' - الصف: {gradeName} - الشعبة: {sectionName} برقم طالب {newLocalNumber}",
+        "registration"
+    );
+
+    return Created($"api/secretary/students/{newLocalNumber}", new
+    {
+        success = true,
+        message = "تم إنشاء الطالب بنجاح",
+        data = new
+        {
+            student.Id,
+            student.Name,
+            student.Email,
+            student.LocalStudentNumber,
+            student.SchoolId,
+            SchoolName = school.Name,
+            SectionId = student.SectionId,
+            LocalSectionNumber = section?.LocalSectionNumber,
+            SectionName = section?.Name,
+            LocalGradeNumber = grade?.LocalGradeNumber,
+            GradeName = grade?.Name,
+            student.BirthDate,
+            Age = CalculateAge(student.BirthDate.Value),
+            student.Address,
+            student.GuardianName,
+            student.GuardianPhone,
+            student.CreatedAt
+        }
+    });
+}
 
     [HttpPut("students/{localStudentNumber:int}")]
     public async Task<IActionResult> UpdateStudent(int localStudentNumber, StudentUpdateRequest request)
@@ -617,10 +680,90 @@ public class SecretaryController(
         
         return age;
     }
+    // ============================================
+// جلب جميع الصفوف في المدرسة (بدون شعب)
+// ============================================
 
-    // ============================================
-    // إرسال إشعارات الإعلانات
-    // ============================================
+[HttpGet("grades")]
+public async Task<IActionResult> GetGradesSimple()
+{
+    var grades = await db.Grades
+        .Where(g => g.SchoolId == SchoolId)
+        .OrderBy(g => g.Level)
+        .Select(g => new
+        {
+            g.Id,
+            g.LocalGradeNumber,
+            g.Name,
+            g.Level,
+            g.IsActive,
+            StudentsCount = db.Students.Count(s => s.SchoolId == SchoolId && 
+                                                   s.Section != null && 
+                                                   s.Section.GradeId == g.Id && 
+                                                   s.IsActive),
+            SectionsCount = db.Sections.Count(s => s.SchoolId == SchoolId && 
+                                                   s.GradeId == g.Id),
+            CreatedAt = g.CreatedAt.ToString("yyyy-MM-dd HH:mm")
+        })
+        .ToListAsync();
+
+    return Ok(new
+    {
+        success = true,
+        message = "تم جلب الصفوف بنجاح",
+        data = grades
+    });
+}
+
+// ============================================
+// جلب صف معين مع تفاصيله
+// ============================================
+
+// [HttpGet("grades/{localGradeNumber:int}")]
+// public async Task<IActionResult> GetGrade(int localGradeNumber)
+// {
+//     var grade = await db.Grades
+//         .Include(g => g.Sections)
+//         .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+//                                   g.LocalGradeNumber == localGradeNumber);
+
+//     if (grade is null)
+//         return NotFound(new { 
+//             success = false, 
+//             message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" 
+//         });
+
+//     return Ok(new
+//     {
+//         success = true,
+//         message = "تم جلب بيانات الصف بنجاح",
+//         data = new
+//         {
+//             grade.Id,
+//             grade.LocalGradeNumber,
+//             grade.Name,
+//             grade.Level,
+//             grade.IsActive,
+//             grade.SchoolId,
+//             grade.CreatedAt,
+//             Sections = grade.Sections
+//                 .OrderBy(s => s.LocalSectionNumber)
+//                 .Select(s => new
+//                 {
+//                     s.Id,
+//                     s.LocalSectionNumber,
+//                     s.Name,
+//                     StudentsCount = db.Students.Count(st => st.SectionId == s.Id && st.IsActive)
+//                 })
+//                 .ToList(),
+//             StudentsCount = db.Students.Count(s => s.SchoolId == SchoolId && 
+//                                                    s.Section != null && 
+//                                                    s.Section.GradeId == grade.Id && 
+//                                                    s.IsActive)
+//         }
+//     });
+// }
+
 
     private async Task NotifyAnnouncementAsync(Announcement announcement)
     {

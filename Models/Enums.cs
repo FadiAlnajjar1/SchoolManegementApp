@@ -141,7 +141,8 @@ public enum ReservationStatus
     Fulfilled=2,
     Cancelled=3,
     Approved=4,
-    Rejected=5
+    Rejected=5,
+    Expired =6
 }
 
 public enum RegistrationStatus

@@ -64,3 +64,9 @@ public class RejectLoanRequest
 {
     public string? Reason { get; set; }
 }
+public class UpdateBookRequest
+{
+    public string? Title { get; set; }
+    public string? Author { get; set; }
+    public int? Copies { get; set; }
+}

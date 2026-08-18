@@ -51,7 +51,7 @@ public class BookReservation
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     [ForeignKey(nameof(StudentId))]
     public virtual Student? Student { get; set; }
-    public DateOnly ExpiryDate { get; set; }
+    public DateOnly? ExpiryDate { get; set; }
     public string? RejectionReason { get; set; }
     public DateTime UpdatedAt { get; internal set; }
 

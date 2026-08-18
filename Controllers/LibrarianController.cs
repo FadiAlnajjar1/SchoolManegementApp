@@ -133,43 +133,50 @@ public class LibrarianController(AppDbContext db, NotificationService notifier) 
     }
 
     [HttpPut("books/{localBookNumber:int}")]
-    public async Task<IActionResult> UpdateBook(int localBookNumber, BookRequest request)
-    {
-        var book = await db.Books
-            .FirstOrDefaultAsync(b => b.SchoolId == SchoolId && 
-                                      b.LocalBookNumber == localBookNumber);
+public async Task<IActionResult> UpdateBook(int localBookNumber, [FromBody] UpdateBookRequest request)
+{
+    var book = await db.Books
+        .FirstOrDefaultAsync(b => b.SchoolId == SchoolId && 
+                                  b.LocalBookNumber == localBookNumber);
 
-        if (book is null)
-            return NotFound(new { success = false, message = $"لا يوجد كتاب برقم {localBookNumber} في المكتبة" });
+    if (book is null)
+        return NotFound(new { success = false, message = $"لا يوجد كتاب برقم {localBookNumber} في المكتبة" });
 
+    // تحديث فقط الحقول التي تم إرسالها
+    if (!string.IsNullOrWhiteSpace(request.Title))
         book.Title = request.Title;
-        book.Author = request.Author ?? "";
-        
+
+    if (!string.IsNullOrWhiteSpace(request.Author))
+        book.Author = request.Author;
+
+    if (request.Copies.HasValue && request.Copies.Value > 0)
+    {
         var borrowedCopies = book.Copies - book.AvailableCopies;
-        book.Copies = request.Copies;
-        book.AvailableCopies = request.Copies - borrowedCopies;
+        book.Copies = request.Copies.Value;
+        book.AvailableCopies = request.Copies.Value - borrowedCopies;
         if (book.AvailableCopies < 0) book.AvailableCopies = 0;
-
-        await db.SaveChangesAsync();
-
-        return Ok(new
-        {
-            success = true,
-            message = "تم تحديث الكتاب بنجاح",
-            data = new
-            {
-                book.Id,
-                book.LocalBookNumber,
-                book.Title,
-                book.Author,
-                book.Copies,
-                book.AvailableCopies,
-                book.ReservedCopies,
-                AvailableForLoan = book.AvailableCopies - book.ReservedCopies,
-                book.CreatedAt
-            }
-        });
     }
+
+    await db.SaveChangesAsync();
+
+    return Ok(new
+    {
+        success = true,
+        message = "تم تحديث الكتاب بنجاح",
+        data = new
+        {
+            book.Id,
+            book.LocalBookNumber,
+            book.Title,
+            book.Author,
+            book.Copies,
+            book.AvailableCopies,
+            book.ReservedCopies,
+            AvailableForLoan = book.AvailableCopies - book.ReservedCopies,
+            book.CreatedAt
+        }
+    });
+}
 
     [HttpDelete("books/{localBookNumber:int}")]
     public async Task<IActionResult> DeleteBook(int localBookNumber)
@@ -539,6 +546,7 @@ public async Task<IActionResult> ApproveReservation(
     int localBookNumber,
     int localStudentNumber)
 {
+    // 1. البحث عن الكتاب
     var book = await db.Books
         .FirstOrDefaultAsync(b => b.SchoolId == SchoolId && 
                                   b.LocalBookNumber == localBookNumber);
@@ -549,6 +557,7 @@ public async Task<IActionResult> ApproveReservation(
             message = $"لا يوجد كتاب برقم {localBookNumber} في المكتبة" 
         });
 
+    // 2. البحث عن الطالب
     var student = await db.Students
         .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
                                   s.LocalStudentNumber == localStudentNumber);
@@ -559,6 +568,7 @@ public async Task<IActionResult> ApproveReservation(
             message = $"لا يوجد طالب برقم {localStudentNumber} في المدرسة" 
         });
 
+    // 3. البحث عن الحجز المعلق
     var reservation = await db.BookReservations
         .Include(r => r.Book)
         .Include(r => r.Student)
@@ -572,36 +582,76 @@ public async Task<IActionResult> ApproveReservation(
             message = $"لا يوجد حجز معلق للطالب {localStudentNumber} على الكتاب {localBookNumber}" 
         });
 
-    // التحقق من أن الحجز لم ينتهِ
-    var today = DateOnly.FromDateTime(DateTime.Today);
-    if (reservation.ExpiryDate < today)
+    // ❌ نحذف التحقق من انتهاء المهلة هنا لأن ExpiryDate سيكون null حتى القبول
+
+    // 4. التحقق من وجود نسخ متوفرة للحجز
+    var availableForReservation = book.AvailableCopies - book.ReservedCopies;
+    
+    // 5. إذا لم تكن هناك نسخ متوفرة -> يبقى الحجز معلقاً
+    if (availableForReservation <= 0)
     {
-        reservation.Status = ReservationStatus.Cancelled;
-        reservation.RejectionReason = "انتهت مهلة الحجز (7 أيام)";
+        // تمديد المهلة (اختياري) - نترك ExpiryDate null
         reservation.UpdatedAt = DateTime.UtcNow;
-        // ❌ لا ننقص ReservedCopies لأنه لم يكن قد زيد سابقاً (الحجز كان Pending)
         
         await db.SaveChangesAsync();
         
-        return BadRequest(new { 
-            success = false, 
-            message = "انتهت مهلة الحجز (7 أيام). تم إلغاء الحجز تلقائياً." 
+        await notifier.SendToLibrarianAsync(
+            SchoolId,
+            "تنبيه: حجز كتاب ينتظر التوفر",
+            $"الطالب {student.Name} ينتظر حجز كتاب \"{book.Title}\" (لا توجد نسخ متوفرة حالياً)",
+            "reservation_waiting");
+        
+        await notifier.SendAsync(student.Id, UserType.Student,
+            "طلب حجزك في قائمة الانتظار",
+            $"لا توجد نسخ متوفرة حالياً من كتاب \"{book.Title}\". سيتم إشعارك عند توفر نسخة.",
+            "reservation_waiting");
+        
+        return Ok(new
+        {
+            success = true,
+            message = "لا توجد نسخ متوفرة حالياً. سيتم إشعارك عند توفر الكتاب.",
+            data = new
+            {
+                Book = new
+                {
+                    book.Id,
+                    book.Title,
+                    book.LocalBookNumber,
+                    book.Author,
+                    AvailableCopies = book.AvailableCopies,
+                    ReservedCopies = book.ReservedCopies,
+                    AvailableForLoan = book.AvailableCopies - book.ReservedCopies
+                },
+                Reservation = new
+                {
+                    reservation.Id,
+                    reservation.Status,
+                    StatusName = reservation.Status.ToString(),
+                    StatusArabic = "قيد الانتظار (في انتظار توفر الكتاب)",
+                    reservation.Date,
+                    reservation.ExpiryDate, // لا يزال null
+                    reservation.UpdatedAt,
+                    reservation.RejectionReason
+                },
+                WaitingMessage = "سيتم إشعارك تلقائياً عند توفر نسخة من الكتاب"
+            }
         });
     }
 
-    // ✅ ✅ ✅ زيادة عدد النسخ المحجوزة عند الموافقة
+    // ✅ 6. الموافقة على الحجز (توجد نسخ متوفرة)
     book.ReservedCopies++;
 
-    // ✅ تغيير الحالة إلى Approved
     reservation.Status = ReservationStatus.Approved;
+    // ✅ تحديد ExpiryDate بعد أسبوع من تاريخ القبول (اليوم)
+    reservation.ExpiryDate = DateOnly.FromDateTime(DateTime.Today.AddDays(7));
     reservation.UpdatedAt = DateTime.UtcNow;
 
     await db.SaveChangesAsync();
 
-    // إشعار للطالب
+    // إشعار للطالب بالموافقة
     await notifier.SendAsync(student.Id, UserType.Student,
         "تمت الموافقة على حجز كتاب",
-        $"تمت الموافقة على حجزك لكتاب \"{book.Title}\". يرجى التوجه إلى المكتبة لاستعارة الكتاب خلال {reservation.ExpiryDate:yyyy-MM-dd}",
+        $"تمت الموافقة على حجزك لكتاب \"{book.Title}\". يرجى التوجه إلى المكتبة لاستعارة الكتاب خلال 7 أيام (حتى {reservation.ExpiryDate:yyyy-MM-dd})",
         "reservation_approved");
 
     return Ok(new
@@ -630,9 +680,12 @@ public async Task<IActionResult> ApproveReservation(
             {
                 reservation.Id,
                 reservation.Status,
+                StatusName = reservation.Status.ToString(),
+                StatusArabic = "مقبول (يجب الاستعارة خلال 7 أيام)",
                 reservation.Date,
-                reservation.ExpiryDate,
-                reservation.UpdatedAt
+                reservation.ExpiryDate, // تاريخ انتهاء الصلاحية بعد 7 أيام من القبول
+                reservation.UpdatedAt,
+                reservation.RejectionReason
             }
         }
     });
