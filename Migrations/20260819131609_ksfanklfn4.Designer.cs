@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using SchoolManagement.Api.Data;
 
@@ -11,9 +12,11 @@ using SchoolManagement.Api.Data;
 namespace SchoolManagement.Api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260819131609_ksfanklfn4")]
+    partial class ksfanklfn4
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -722,9 +725,6 @@ namespace SchoolManagement.Api.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
-                    b.Property<int>("AcademicYear")
-                        .HasColumnType("int");
-
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
@@ -1234,9 +1234,6 @@ namespace SchoolManagement.Api.Migrations
                     b.Property<bool>("IsPhoneVerified")
                         .HasColumnType("bit");
 
-                    b.Property<bool>("IsPromotedThisYear")
-                        .HasColumnType("bit");
-
                     b.Property<int>("LocalStudentNumber")
                         .HasColumnType("int");
 
@@ -1250,12 +1247,6 @@ namespace SchoolManagement.Api.Migrations
 
                     b.Property<string>("Photo")
                         .HasColumnType("nvarchar(max)");
-
-                    b.Property<DateTime?>("PromotedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int?>("PromotedToGradeId")
-                        .HasColumnType("int");
 
                     b.Property<int>("SchoolId")
                         .HasColumnType("int");

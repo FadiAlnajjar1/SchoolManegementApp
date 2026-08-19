@@ -209,6 +209,7 @@ public class TeacherController(
                             LocalSubjectId = m.Subject != null ? m.Subject.LocalSubjectId : 0,
                             SubjectName = m.Subject != null ? m.Subject.Name : null,
                             m.Semester,
+                            m.AcademicYear, // ✅ إضافة السنة
                             m.Oral,
                             m.Quiz1,
                             m.Quiz2,
@@ -227,6 +228,7 @@ public class TeacherController(
                             LocalSubjectId = m.Subject != null ? m.Subject.LocalSubjectId : 0,
                             SubjectName = m.Subject != null ? m.Subject.Name : null,
                             m.Semester,
+                            m.AcademicYear, // ✅ إضافة السنة
                             m.Oral,
                             m.Quiz1,
                             m.Quiz2,
@@ -259,6 +261,7 @@ public class TeacherController(
                 {
                     LocalSubjectId = g.Key.LocalSubjectId,
                     SubjectName = g.Key.SubjectName,
+                    AcademicYear = g.FirstOrDefault()?.AcademicYear ?? 0, // ✅ إضافة السنة
                     Oral = g.FirstOrDefault()?.Oral ?? 0,
                     Quiz1 = g.FirstOrDefault()?.Quiz1 ?? 0,
                     Quiz2 = g.FirstOrDefault()?.Quiz2 ?? 0,
@@ -275,6 +278,7 @@ public class TeacherController(
                 {
                     LocalSubjectId = g.Key.LocalSubjectId,
                     SubjectName = g.Key.SubjectName,
+                    AcademicYear = g.FirstOrDefault()?.AcademicYear ?? 0, // ✅ إضافة السنة
                     Oral = g.FirstOrDefault()?.Oral ?? 0,
                     Quiz1 = g.FirstOrDefault()?.Quiz1 ?? 0,
                     Quiz2 = g.FirstOrDefault()?.Quiz2 ?? 0,
@@ -346,6 +350,8 @@ public class TeacherController(
             if (!isValid)
                 return BadRequest(new { success = false, message = errorMessage });
 
+            var currentYear = DateTime.Now.Year; // ✅ السنة الحالية
+
             var blocked = await rules.ValidateSecondPeriodAttendanceTakenAsync(TeacherId);
             if (blocked is not null) 
                 return StatusCode(403, new { message = blocked });
@@ -410,12 +416,13 @@ public class TeacherController(
 
             if (existingMark is null)
             {
-                // ✅ إنشاء علامة جديدة
+                // ✅ إنشاء علامة جديدة مع AcademicYear
                 existingMark = new Mark
                 {
                     StudentId = student.Id,
                     SubjectId = subject.Id,
                     Semester = request.Semester,
+                    AcademicYear = currentYear, // ✅ إضافة السنة
                     EnteredById = TeacherId,
                     SchoolId = effectiveSchoolId,
                     CreatedAt = DateTime.UtcNow
@@ -483,6 +490,7 @@ public class TeacherController(
                     LocalSubjectId = subject.LocalSubjectId,
                     SubjectName = subject.Name,
                     Semester = existingMark.Semester,
+                    AcademicYear = existingMark.AcademicYear, // ✅ إضافة السنة
                     QuizTypeId = request.QuizTypeId,
                     QuizTypeName = quizTypeName,
                     Score = request.Score,
@@ -526,6 +534,8 @@ public class TeacherController(
         if (!isValid)
             return BadRequest(new { success = false, message = errorMessage });
 
+        var currentYear = DateTime.Now.Year; // ✅ السنة الحالية
+
         var blocked = await rules.ValidateSecondPeriodAttendanceTakenAsync(TeacherId);
         if (blocked is not null) 
             return StatusCode(403, new { message = blocked });
@@ -563,6 +573,10 @@ public class TeacherController(
                 success = false, 
                 message = $"لا توجد علامة للطالب {request.LocalStudentNumber} في مادة {request.LocalSubjectId} للفصل {request.Semester}" 
             });
+
+        // ✅ تحديث AcademicYear إذا كان مختلفاً
+        if (mark.AcademicYear != currentYear)
+            mark.AcademicYear = currentYear;
 
         // ✅ التحقق من صحة العلامات
         if (request.Score.HasValue && request.MaxScore.HasValue)
@@ -652,6 +666,7 @@ public class TeacherController(
                 LocalSubjectId = subject.LocalSubjectId,
                 SubjectName = subject.Name,
                 Semester = mark.Semester,
+                AcademicYear = mark.AcademicYear, // ✅ إضافة السنة
                 QuizTypeId = request.QuizTypeId,
                 QuizTypeName = quizTypeName,
                 
@@ -947,7 +962,7 @@ public class TeacherController(
             schools.Add(school);
         }
 
-        // ✅ باقي البيانات (نفسها مع تعديل بسيط)
+        // ✅ باقي البيانات
         var marks = await db.Marks
             .Where(m => db.TeacherGrades.Any(t => t.TeacherId == TeacherId && t.SubjectId == m.SubjectId))
             .OrderByDescending(m => m.UpdatedAt).Take(500)
@@ -959,6 +974,7 @@ public class TeacherController(
                 LocalSubjectId = m.Subject != null ? m.Subject.LocalSubjectId : 0,
                 SubjectName = m.Subject != null ? m.Subject.Name : null,
                 m.Semester,
+                m.AcademicYear, // ✅ إضافة السنة
                 m.Oral,
                 m.Quiz1,
                 m.Quiz2,
@@ -992,7 +1008,6 @@ public class TeacherController(
             })
             .ToListAsync();
 
-        // ✅ Performance Reports - بدون schoolId (جلب كل التقارير)
         var perfReports = await db.PerformanceReports
             .Where(r => r.TeacherId == TeacherId)
             .Join(db.Subjects, r => r.SubjectId, s => s.Id, (r, s) => new { r, s })
@@ -1163,6 +1178,7 @@ public class TeacherController(
             {
                 m.Id,
                 m.Semester,
+                m.AcademicYear, // ✅ إضافة السنة
                 m.Oral,
                 m.Quiz1,
                 m.Quiz2,
@@ -1181,7 +1197,7 @@ public class TeacherController(
             })
             .ToListAsync();
 
-        // ✅ جلب قائمة المواد مع حالة وجود علامات (يتم حسابه في الذاكرة وليس في SQL)
+        // ✅ جلب قائمة المواد مع حالة وجود علامات
         var teacherSubjectsWithMarks = teacherSubjects
             .Select(s => new
             {
@@ -1191,13 +1207,14 @@ public class TeacherController(
             })
             .ToList();
 
-        // ✅ فصل العلامات حسب الفصل الدراسي (للمواد التي يدرسها المعلم فقط)
+        // ✅ فصل العلامات حسب الفصل الدراسي
         var semester1Marks = marks
             .Where(m => m.Semester == 1)
             .Select(m => new
             {
                 m.LocalSubjectId,
                 m.SubjectName,
+                m.AcademicYear, // ✅ إضافة السنة
                 m.Oral,
                 m.Quiz1,
                 m.Quiz2,
@@ -1226,13 +1243,13 @@ public class TeacherController(
             .OrderBy(m => m.LocalSubjectId)
             .ToList();
 
-        // ✅ نفس الشيء للفصل الثاني
         var semester2Marks = marks
             .Where(m => m.Semester == 2)
             .Select(m => new
             {
                 m.LocalSubjectId,
                 m.SubjectName,
+                m.AcademicYear, // ✅ إضافة السنة
                 m.Oral,
                 m.Quiz1,
                 m.Quiz2,
@@ -1261,7 +1278,7 @@ public class TeacherController(
             .OrderBy(m => m.LocalSubjectId)
             .ToList();
 
-        // ✅ حساب المتوسطات (للمواد التي يدرسها المعلم فقط)
+        // ✅ حساب المتوسطات
         var semester1Average = semester1Marks.Any() 
             ? Math.Round(semester1Marks.Average(m => m.Total), 2)
             : 0;
@@ -1274,14 +1291,12 @@ public class TeacherController(
             ? Math.Round(marks.Average(m => m.Total), 2)
             : 0;
 
-        // ✅ الرد النهائي
         return Ok(new
         {
             success = true,
             message = "تم جلب ملف الطالب بنجاح",
             data = new
             {
-                // ✅ المعلومات الأساسية
                 Student = new
                 {
                     student.Id,
@@ -1294,33 +1309,21 @@ public class TeacherController(
                     student.Address,
                     student.DismissalWarning,
                     student.CreatedAt,
-                    
                     SectionName = student.Section?.Name,
                     LocalSectionNumber = student.Section?.LocalSectionNumber ?? 0,
                     GradeName = student.Section?.Grade?.Name,
                     LocalGradeNumber = student.Section?.Grade?.LocalGradeNumber ?? 0,
-                    // ✅ إزالة AcademicYear لتجنب المراجع الدائرية
                     GradeLevel = student.Section?.Grade?.Level ?? 0
                 },
-
-                // ✅ المواد التي يدرسها المعلم مع حالة وجود علامات
                 TeacherSubjects = teacherSubjectsWithMarks,
-
-                // ✅ إحصائيات المواد
                 SubjectsStatistics = new
                 {
                     TotalSubjects = teacherSubjects.Count,
                     SubjectsWithMarks = teacherSubjectsWithMarks.Count(s => s.HasMarks),
                     SubjectsWithoutMarks = teacherSubjectsWithMarks.Count(s => !s.HasMarks)
                 },
-
-                // ✅ العلامات للفصل الأول (مواد المعلم فقط)
                 Semester1Marks = semester1Marks,
-                
-                // ✅ العلامات للفصل الثاني (مواد المعلم فقط)
                 Semester2Marks = semester2Marks,
-                
-                // ✅ المتوسطات (لمواد المعلم فقط)
                 Averages = new
                 {
                     Semester1 = semester1Average,

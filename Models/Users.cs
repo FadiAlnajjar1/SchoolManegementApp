@@ -81,6 +81,9 @@ public class Student
     
     
     // حالة الطالب
+    public bool IsPromotedThisYear { get; set; } = false;
+    public int? PromotedToGradeId { get; set; }
+    public DateTime? PromotedAt { get; set; }
     public bool DismissalWarning { get; set; }
     public bool IsPhoneVerified { get; set; } = false;  // ← جديد: التحقق من رقم الهاتف
     

@@ -386,98 +386,496 @@ public static class DbSeeder
         await db.SaveChangesAsync();
 
         // ============================================
-        // 14. إنشاء العلامات للطلاب
-        // ============================================
-        var marks = new List<Mark>();
-        var passPercent = 50m; // نسبة النجاح 50%
+// 14. إنشاء العلامات للطلاب - جميع المواد الستة
+// ============================================
 
-        foreach (var student in students)
-        {
-            foreach (var subject in subjects)
-            {
-                // التحقق من أن الطالب في شعبة تدرس هذه المادة
-                var teacherGrade = await db.TeacherGrades
-                    .FirstOrDefaultAsync(tg => tg.SectionId == student.SectionId && tg.SubjectId == subject.Id);
+// ✅ جلب جميع الطلاب بعد إضافتهم
+var allStudents = await db.Students
+    .Include(s => s.Section)
+    .ThenInclude(sec => sec!.Grade)
+    .Where(s => s.SchoolId == school1.Id)
+    .OrderBy(s => s.LocalStudentNumber)
+    .ToListAsync();
 
-                if (teacherGrade == null) continue;
+var marks = new List<Mark>();
 
-                // إنشاء علامات عشوائية مع بعض الطلاب راسبين
-                var maxOral = 10;
-                var maxQuiz1 = 10;
-                var maxQuiz2 = 10;
-                var maxHomework = 10;
-                var maxFinalExam = 60;
-                var maxTotal = maxOral + maxQuiz1 + maxQuiz2 + maxHomework + maxFinalExam;
 
-                // بعض الطلاب يضعفون في بعض المواد
-                var isWeakStudent = student.Id % 3 == 0; // كل ثالث طالب ضعيف
+// ✅ دالة مساعدة لإضافة علامة
+void AddMark(int studentId, int subjectId, int semester, int academicYear,
+             decimal oral, decimal quiz1, decimal quiz2, 
+             decimal homework, decimal finalExam,
+             decimal maxOral = 10, decimal maxQuiz1 = 10, 
+             decimal maxQuiz2 = 10, decimal maxHomework = 10, 
+             decimal maxFinalExam = 40)
+{
+    var total = oral + quiz1 + quiz2 + homework + finalExam;
+    var maxTotal = maxOral + maxQuiz1 + maxQuiz2 + maxHomework + maxFinalExam;
+    
+    marks.Add(new Mark
+    {
+        StudentId = studentId,
+        SubjectId = subjectId,
+        Semester = semester,
+        SchoolId = school1.Id,
+        AcademicYear = academicYear, // ✅ السنة الدراسية
+        
+        // العلامات المكتسبة
+        Oral = oral,
+        Quiz1 = quiz1,
+        Quiz2 = quiz2,
+        Homework = homework,
+        FinalExam = finalExam,
+        Total = total,
+        
+        // العلامات الكاملة
+        MaxOral = maxOral,
+        MaxQuiz1 = maxQuiz1,
+        MaxQuiz2 = maxQuiz2,
+        MaxHomework = maxHomework,
+        MaxFinalExam = maxFinalExam,
+        
+        Notes = $"علامات الفصل {semester} - السنة {academicYear}",
+        CreatedAt = DateTime.UtcNow,
+        UpdatedAt = DateTime.UtcNow
+    });
+}
 
-                // بعض المواد صعبة على بعض الطلاب
-                var isHardSubject = subject.Id % 2 == 0; // المواد الزوجية أصعب
+// ============================================
+// 1. أحمد محمد - الصف الأول - ناجح
+// ============================================
+var ahmed = allStudents.First(s => s.Name == "أحمد محمد" && s.LocalStudentNumber == 1);
 
-                // حساب العلامات
-                decimal oral, quiz1, quiz2, homework, finalExam, total;
+// الفصل الأول - أحمد ناجح في جميع المواد (السنة الحالية)
+AddMark(ahmed.Id, subjects[0].Id, 1, currentYear, 8, 9, 7, 8, 35); // الرياضيات - ناجح
+AddMark(ahmed.Id, subjects[1].Id, 1, currentYear, 7, 8, 9, 7, 32); // اللغة العربية - ناجح
+AddMark(ahmed.Id, subjects[2].Id, 1, currentYear, 9, 7, 8, 9, 36); // العلوم - ناجح
+AddMark(ahmed.Id, subjects[3].Id, 1, currentYear, 6, 8, 7, 8, 30); // اللغة الإنجليزية - ناجح
+AddMark(ahmed.Id, subjects[4].Id, 1, currentYear, 8, 9, 7, 8, 33); // التاريخ - ناجح
+AddMark(ahmed.Id, subjects[5].Id, 1, currentYear, 7, 8, 9, 7, 31); // الجغرافيا - ناجح
 
-                if (isWeakStudent || isHardSubject)
-                {
-                    // طالب ضعيف أو مادة صعبة - ينجح أحياناً
-                    oral = random.Next(0, (int)(maxOral * 0.6m));
-                    quiz1 = random.Next(0, (int)(maxQuiz1 * 0.5m));
-                    quiz2 = random.Next(0, (int)(maxQuiz2 * 0.5m));
-                    homework = random.Next(0, (int)(maxHomework * 0.5m));
-                    finalExam = random.Next(0, (int)(maxFinalExam * 0.4m));
-                }
-                else
-                {
-                    // طالب قوي
-                    oral = random.Next((int)(maxOral * 0.7m), maxOral + 1);
-                    quiz1 = random.Next((int)(maxQuiz1 * 0.7m), maxQuiz1 + 1);
-                    quiz2 = random.Next((int)(maxQuiz2 * 0.7m), maxQuiz2 + 1);
-                    homework = random.Next((int)(maxHomework * 0.7m), maxHomework + 1);
-                    finalExam = random.Next((int)(maxFinalExam * 0.6m), maxFinalExam + 1);
-                }
+// الفصل الثاني - أحمد ناجح ممتاز (السنة الحالية)
+AddMark(ahmed.Id, subjects[0].Id, 2, currentYear, 9, 8, 9, 8, 38); // الرياضيات - ممتاز
+AddMark(ahmed.Id, subjects[1].Id, 2, currentYear, 8, 9, 8, 9, 35); // اللغة العربية - ناجح
+AddMark(ahmed.Id, subjects[2].Id, 2, currentYear, 9, 9, 8, 9, 37); // العلوم - ممتاز
+AddMark(ahmed.Id, subjects[3].Id, 2, currentYear, 7, 8, 9, 8, 33); // اللغة الإنجليزية - ناجح
+AddMark(ahmed.Id, subjects[4].Id, 2, currentYear, 8, 9, 8, 9, 36); // التاريخ - ممتاز
+AddMark(ahmed.Id, subjects[5].Id, 2, currentYear, 7, 8, 9, 8, 32); // الجغرافيا - ناجح
 
-                total = oral + quiz1 + quiz2 + homework + finalExam;
+// ============================================
+// 2. ليلى خالد - الصف الأول - راسبة
+// ============================================
+var leila = allStudents.First(s => s.Name == "ليلى خالد" && s.LocalStudentNumber == 2);
 
-                // ✅ التأكد من وجود راسبين في كل صف (نسبة 20-30%)
-                if (student.LocalStudentNumber % 5 == 0 && total > passPercent)
-                {
-                    // اجعل بعض الطلاب راسبين
-                    total = random.Next(0, (int)passPercent);
-                    // تعديل العلامات لتناسب المجموع
-                    var ratio = total / maxTotal;
-                    oral = Math.Min(oral * ratio, maxOral);
-                    quiz1 = Math.Min(quiz1 * ratio, maxQuiz1);
-                    quiz2 = Math.Min(quiz2 * ratio, maxQuiz2);
-                    homework = Math.Min(homework * ratio, maxHomework);
-                    finalExam = Math.Min(finalExam * ratio, maxFinalExam);
-                    total = oral + quiz1 + quiz2 + homework + finalExam;
-                }
+// الفصل الأول - ليلى راسبة في جميع المواد (السنة الحالية)
+AddMark(leila.Id, subjects[0].Id, 1, currentYear, 3, 4, 2, 3, 15); // الرياضيات - راسب
+AddMark(leila.Id, subjects[1].Id, 1, currentYear, 4, 3, 5, 4, 18); // اللغة العربية - راسب
+AddMark(leila.Id, subjects[2].Id, 1, currentYear, 5, 4, 3, 5, 20); // العلوم - راسب
+AddMark(leila.Id, subjects[3].Id, 1, currentYear, 3, 5, 4, 3, 16); // اللغة الإنجليزية - راسب
+AddMark(leila.Id, subjects[4].Id, 1, currentYear, 4, 3, 5, 4, 17); // التاريخ - راسب
+AddMark(leila.Id, subjects[5].Id, 1, currentYear, 3, 5, 4, 3, 15); // الجغرافيا - راسب
 
-                var mark = new Mark
-                {
-                    StudentId = student.Id,
-                    SubjectId = subject.Id,
-                    SchoolId = school1.Id,
-                    Semester = 2,
-                    Oral = Math.Round(oral, 2),
-                    Quiz1 = Math.Round(quiz1, 2),
-                    Quiz2 = Math.Round(quiz2, 2),
-                    Homework = Math.Round(homework, 2),
-                    FinalExam = Math.Round(finalExam, 2),
-                    Total = Math.Round(total, 2),
-                    MaxOral = maxOral,
-                    MaxQuiz1 = maxQuiz1,
-                    MaxQuiz2 = maxQuiz2,
-                    MaxHomework = maxHomework,
-                    MaxFinalExam = maxFinalExam,
-                    UpdatedAt = DateTime.UtcNow
-                };
-                marks.Add(mark);
-            }
-        }
-        db.Marks.AddRange(marks);
-        await db.SaveChangesAsync();
+// الفصل الثاني - ليلى راسبة (السنة الحالية)
+AddMark(leila.Id, subjects[0].Id, 2, currentYear, 4, 3, 5, 4, 17); // الرياضيات - راسب
+AddMark(leila.Id, subjects[1].Id, 2, currentYear, 3, 5, 4, 3, 15); // اللغة العربية - راسب
+AddMark(leila.Id, subjects[2].Id, 2, currentYear, 5, 4, 3, 5, 19); // العلوم - راسب
+AddMark(leila.Id, subjects[3].Id, 2, currentYear, 4, 3, 5, 4, 18); // اللغة الإنجليزية - راسب
+AddMark(leila.Id, subjects[4].Id, 2, currentYear, 3, 5, 4, 3, 16); // التاريخ - راسب
+AddMark(leila.Id, subjects[5].Id, 2, currentYear, 4, 3, 5, 4, 17); // الجغرافيا - راسب
+
+// ============================================
+// 3. سامر علي - الصف الأول - ناجح
+// ============================================
+var samer = allStudents.First(s => s.Name == "سامر علي" && s.LocalStudentNumber == 3);
+
+// الفصل الأول - سامر ناجح (السنة الحالية)
+AddMark(samer.Id, subjects[0].Id, 1, currentYear, 7, 8, 6, 7, 31); // الرياضيات - ناجح
+AddMark(samer.Id, subjects[1].Id, 1, currentYear, 8, 7, 8, 9, 33); // اللغة العربية - ناجح
+AddMark(samer.Id, subjects[2].Id, 1, currentYear, 6, 9, 7, 8, 29); // العلوم - ناجح
+AddMark(samer.Id, subjects[3].Id, 1, currentYear, 8, 8, 7, 9, 34); // اللغة الإنجليزية - ناجح
+AddMark(samer.Id, subjects[4].Id, 1, currentYear, 7, 8, 6, 8, 30); // التاريخ - ناجح
+AddMark(samer.Id, subjects[5].Id, 1, currentYear, 8, 7, 8, 9, 32); // الجغرافيا - ناجح
+
+// الفصل الثاني - سامر ناجح ممتاز (السنة الحالية)
+AddMark(samer.Id, subjects[0].Id, 2, currentYear, 8, 9, 8, 9, 36); // الرياضيات - ممتاز
+AddMark(samer.Id, subjects[1].Id, 2, currentYear, 9, 8, 9, 8, 37); // اللغة العربية - ممتاز
+AddMark(samer.Id, subjects[2].Id, 2, currentYear, 7, 9, 8, 9, 35); // العلوم - ناجح
+AddMark(samer.Id, subjects[3].Id, 2, currentYear, 8, 9, 7, 9, 36); // اللغة الإنجليزية - ممتاز
+AddMark(samer.Id, subjects[4].Id, 2, currentYear, 9, 8, 9, 8, 35); // التاريخ - ناجح
+AddMark(samer.Id, subjects[5].Id, 2, currentYear, 8, 9, 7, 9, 34); // الجغرافيا - ناجح
+
+// ============================================
+// 4. نورا سعيد - الصف الأول - راسبة
+// ============================================
+var noura = allStudents.First(s => s.Name == "نورا سعيد" && s.LocalStudentNumber == 4);
+
+// الفصل الأول - نورا راسبة (السنة الحالية)
+AddMark(noura.Id, subjects[0].Id, 1, currentYear, 2, 3, 4, 2, 12); // الرياضيات - راسب
+AddMark(noura.Id, subjects[1].Id, 1, currentYear, 3, 2, 3, 4, 14); // اللغة العربية - راسب
+AddMark(noura.Id, subjects[2].Id, 1, currentYear, 4, 3, 2, 3, 15); // العلوم - راسب
+AddMark(noura.Id, subjects[3].Id, 1, currentYear, 2, 4, 3, 2, 13); // اللغة الإنجليزية - راسب
+AddMark(noura.Id, subjects[4].Id, 1, currentYear, 3, 2, 4, 3, 14); // التاريخ - راسب
+AddMark(noura.Id, subjects[5].Id, 1, currentYear, 2, 4, 3, 2, 12); // الجغرافيا - راسب
+
+// الفصل الثاني - نورا راسبة (السنة الحالية)
+AddMark(noura.Id, subjects[0].Id, 2, currentYear, 3, 4, 2, 3, 16); // الرياضيات - راسب
+AddMark(noura.Id, subjects[1].Id, 2, currentYear, 4, 3, 4, 2, 17); // اللغة العربية - راسب
+AddMark(noura.Id, subjects[2].Id, 2, currentYear, 2, 5, 3, 4, 15); // العلوم - راسب
+AddMark(noura.Id, subjects[3].Id, 2, currentYear, 3, 4, 2, 3, 14); // اللغة الإنجليزية - راسب
+AddMark(noura.Id, subjects[4].Id, 2, currentYear, 4, 3, 4, 2, 16); // التاريخ - راسب
+AddMark(noura.Id, subjects[5].Id, 2, currentYear, 3, 4, 2, 3, 15); // الجغرافيا - راسب
+
+// ============================================
+// 5. محمود حسن - الصف الأول - ناجح ممتاز
+// ============================================
+var mahmoud = allStudents.First(s => s.Name == "محمود حسن" && s.LocalStudentNumber == 5);
+
+// الفصل الأول - محمود ناجح ممتاز (السنة الحالية)
+AddMark(mahmoud.Id, subjects[0].Id, 1, currentYear, 9, 8, 9, 8, 38); // الرياضيات - ممتاز
+AddMark(mahmoud.Id, subjects[1].Id, 1, currentYear, 8, 9, 8, 9, 36); // اللغة العربية - ممتاز
+AddMark(mahmoud.Id, subjects[2].Id, 1, currentYear, 9, 9, 8, 8, 37); // العلوم - ممتاز
+AddMark(mahmoud.Id, subjects[3].Id, 1, currentYear, 8, 8, 9, 9, 35); // اللغة الإنجليزية - ممتاز
+AddMark(mahmoud.Id, subjects[4].Id, 1, currentYear, 9, 8, 9, 8, 37); // التاريخ - ممتاز
+AddMark(mahmoud.Id, subjects[5].Id, 1, currentYear, 8, 9, 8, 9, 36); // الجغرافيا - ممتاز
+
+// الفصل الثاني - محمود ناجح ممتاز (السنة الحالية)
+AddMark(mahmoud.Id, subjects[0].Id, 2, currentYear, 9, 9, 9, 8, 39); // الرياضيات - ممتاز
+AddMark(mahmoud.Id, subjects[1].Id, 2, currentYear, 8, 9, 9, 9, 38); // اللغة العربية - ممتاز
+AddMark(mahmoud.Id, subjects[2].Id, 2, currentYear, 9, 8, 9, 9, 37); // العلوم - ممتاز
+AddMark(mahmoud.Id, subjects[3].Id, 2, currentYear, 9, 9, 8, 9, 39); // اللغة الإنجليزية - ممتاز
+AddMark(mahmoud.Id, subjects[4].Id, 2, currentYear, 8, 9, 9, 8, 38); // التاريخ - ممتاز
+AddMark(mahmoud.Id, subjects[5].Id, 2, currentYear, 9, 9, 8, 9, 39); // الجغرافيا - ممتاز
+
+// ============================================
+// 6. فاطمة علي - الصف الثاني - ناجحة
+// ============================================
+var fatima = allStudents.First(s => s.Name == "فاطمة علي" && s.LocalStudentNumber == 6);
+
+// الفصل الأول - فاطمة ناجحة (السنة الحالية)
+AddMark(fatima.Id, subjects[0].Id, 1, currentYear, 7, 8, 7, 8, 32); // الرياضيات - ناجح
+AddMark(fatima.Id, subjects[1].Id, 1, currentYear, 8, 7, 8, 7, 33); // اللغة العربية - ناجح
+AddMark(fatima.Id, subjects[2].Id, 1, currentYear, 7, 9, 8, 8, 34); // العلوم - ناجح
+AddMark(fatima.Id, subjects[3].Id, 1, currentYear, 8, 8, 7, 9, 35); // اللغة الإنجليزية - ناجح
+AddMark(fatima.Id, subjects[4].Id, 1, currentYear, 7, 8, 7, 8, 31); // التاريخ - ناجح
+AddMark(fatima.Id, subjects[5].Id, 1, currentYear, 8, 7, 8, 9, 32); // الجغرافيا - ناجح
+
+// الفصل الثاني - فاطمة ناجحة (السنة الحالية)
+AddMark(fatima.Id, subjects[0].Id, 2, currentYear, 8, 9, 8, 9, 36); // الرياضيات - ناجح
+AddMark(fatima.Id, subjects[1].Id, 2, currentYear, 9, 8, 9, 8, 35); // اللغة العربية - ناجح
+AddMark(fatima.Id, subjects[2].Id, 2, currentYear, 8, 9, 9, 8, 37); // العلوم - ممتاز
+AddMark(fatima.Id, subjects[3].Id, 2, currentYear, 9, 8, 8, 9, 36); // اللغة الإنجليزية - ناجح
+AddMark(fatima.Id, subjects[4].Id, 2, currentYear, 8, 9, 8, 9, 35); // التاريخ - ناجح
+AddMark(fatima.Id, subjects[5].Id, 2, currentYear, 9, 8, 9, 8, 36); // الجغرافيا - ناجح
+
+// ============================================
+// 7. حسن حسين - الصف الثاني - راسب
+// ============================================
+var hassan = allStudents.First(s => s.Name == "حسن حسين" && s.LocalStudentNumber == 7);
+
+// الفصل الأول - حسن راسب (السنة الحالية)
+AddMark(hassan.Id, subjects[0].Id, 1, currentYear, 3, 4, 2, 3, 14); // الرياضيات - راسب
+AddMark(hassan.Id, subjects[1].Id, 1, currentYear, 4, 3, 5, 4, 16); // اللغة العربية - راسب
+AddMark(hassan.Id, subjects[2].Id, 1, currentYear, 2, 5, 3, 4, 15); // العلوم - راسب
+AddMark(hassan.Id, subjects[3].Id, 1, currentYear, 5, 3, 4, 2, 17); // اللغة الإنجليزية - راسب
+AddMark(hassan.Id, subjects[4].Id, 1, currentYear, 3, 4, 2, 3, 13); // التاريخ - راسب
+AddMark(hassan.Id, subjects[5].Id, 1, currentYear, 4, 3, 5, 4, 15); // الجغرافيا - راسب
+
+// الفصل الثاني - حسن راسب (السنة الحالية)
+AddMark(hassan.Id, subjects[0].Id, 2, currentYear, 4, 3, 5, 4, 18); // الرياضيات - راسب
+AddMark(hassan.Id, subjects[1].Id, 2, currentYear, 3, 5, 4, 3, 16); // اللغة العربية - راسب
+AddMark(hassan.Id, subjects[2].Id, 2, currentYear, 5, 4, 3, 5, 19); // العلوم - راسب
+AddMark(hassan.Id, subjects[3].Id, 2, currentYear, 4, 3, 5, 4, 17); // اللغة الإنجليزية - راسب
+AddMark(hassan.Id, subjects[4].Id, 2, currentYear, 3, 5, 4, 3, 15); // التاريخ - راسب
+AddMark(hassan.Id, subjects[5].Id, 2, currentYear, 4, 3, 5, 4, 18); // الجغرافيا - راسب
+
+// ============================================
+// 8. زينب محمود - الصف الثاني - ناجحة ممتازة
+// ============================================
+var zainab = allStudents.First(s => s.Name == "زينب محمود" && s.LocalStudentNumber == 8);
+
+// الفصل الأول - زينب ناجحة ممتازة (السنة الحالية)
+AddMark(zainab.Id, subjects[0].Id, 1, currentYear, 8, 9, 8, 9, 37); // الرياضيات - ممتاز
+AddMark(zainab.Id, subjects[1].Id, 1, currentYear, 9, 8, 9, 8, 36); // اللغة العربية - ممتاز
+AddMark(zainab.Id, subjects[2].Id, 1, currentYear, 8, 9, 9, 8, 38); // العلوم - ممتاز
+AddMark(zainab.Id, subjects[3].Id, 1, currentYear, 9, 8, 8, 9, 37); // اللغة الإنجليزية - ممتاز
+AddMark(zainab.Id, subjects[4].Id, 1, currentYear, 8, 9, 8, 9, 36); // التاريخ - ممتاز
+AddMark(zainab.Id, subjects[5].Id, 1, currentYear, 9, 8, 9, 8, 37); // الجغرافيا - ممتاز
+
+// الفصل الثاني - زينب ناجحة ممتازة (السنة الحالية)
+AddMark(zainab.Id, subjects[0].Id, 2, currentYear, 9, 9, 9, 9, 39); // الرياضيات - ممتاز
+AddMark(zainab.Id, subjects[1].Id, 2, currentYear, 8, 9, 9, 9, 38); // اللغة العربية - ممتاز
+AddMark(zainab.Id, subjects[2].Id, 2, currentYear, 9, 8, 9, 9, 39); // العلوم - ممتاز
+AddMark(zainab.Id, subjects[3].Id, 2, currentYear, 9, 9, 8, 9, 40); // اللغة الإنجليزية - ممتاز
+AddMark(zainab.Id, subjects[4].Id, 2, currentYear, 8, 9, 9, 8, 38); // التاريخ - ممتاز
+AddMark(zainab.Id, subjects[5].Id, 2, currentYear, 9, 8, 9, 9, 39); // الجغرافيا - ممتاز
+
+// ============================================
+// 9. عمر خالد - الصف الثاني - ناجح
+// ============================================
+var omar = allStudents.First(s => s.Name == "عمر خالد" && s.LocalStudentNumber == 9);
+
+// الفصل الأول - عمر ناجح (السنة الحالية)
+AddMark(omar.Id, subjects[0].Id, 1, currentYear, 7, 8, 7, 8, 31); // الرياضيات - ناجح
+AddMark(omar.Id, subjects[1].Id, 1, currentYear, 8, 7, 8, 7, 32); // اللغة العربية - ناجح
+AddMark(omar.Id, subjects[2].Id, 1, currentYear, 7, 8, 9, 8, 33); // العلوم - ناجح
+AddMark(omar.Id, subjects[3].Id, 1, currentYear, 8, 7, 8, 9, 34); // اللغة الإنجليزية - ناجح
+AddMark(omar.Id, subjects[4].Id, 1, currentYear, 7, 8, 7, 8, 30); // التاريخ - ناجح
+AddMark(omar.Id, subjects[5].Id, 1, currentYear, 8, 7, 8, 9, 33); // الجغرافيا - ناجح
+
+// الفصل الثاني - عمر ناجح (السنة الحالية)
+AddMark(omar.Id, subjects[0].Id, 2, currentYear, 8, 9, 8, 9, 35); // الرياضيات - ناجح
+AddMark(omar.Id, subjects[1].Id, 2, currentYear, 9, 8, 9, 8, 36); // اللغة العربية - ناجح
+AddMark(omar.Id, subjects[2].Id, 2, currentYear, 8, 9, 8, 9, 37); // العلوم - ناجح
+AddMark(omar.Id, subjects[3].Id, 2, currentYear, 9, 8, 9, 8, 35); // اللغة الإنجليزية - ناجح
+AddMark(omar.Id, subjects[4].Id, 2, currentYear, 8, 9, 8, 9, 36); // التاريخ - ناجح
+AddMark(omar.Id, subjects[5].Id, 2, currentYear, 9, 8, 9, 8, 34); // الجغرافيا - ناجح
+
+// ============================================
+// 10. منى سليم - الصف الثاني - راسبة
+// ============================================
+var mona = allStudents.First(s => s.Name == "منى سليم" && s.LocalStudentNumber == 10);
+
+// الفصل الأول - منى راسبة (السنة الحالية)
+AddMark(mona.Id, subjects[0].Id, 1, currentYear, 2, 3, 4, 2, 11); // الرياضيات - راسب
+AddMark(mona.Id, subjects[1].Id, 1, currentYear, 3, 2, 3, 4, 13); // اللغة العربية - راسب
+AddMark(mona.Id, subjects[2].Id, 1, currentYear, 4, 3, 2, 3, 14); // العلوم - راسب
+AddMark(mona.Id, subjects[3].Id, 1, currentYear, 2, 4, 3, 2, 12); // اللغة الإنجليزية - راسب
+AddMark(mona.Id, subjects[4].Id, 1, currentYear, 3, 2, 4, 3, 13); // التاريخ - راسب
+AddMark(mona.Id, subjects[5].Id, 1, currentYear, 2, 4, 3, 2, 11); // الجغرافيا - راسب
+
+// الفصل الثاني - منى راسبة (السنة الحالية)
+AddMark(mona.Id, subjects[0].Id, 2, currentYear, 3, 4, 2, 3, 15); // الرياضيات - راسب
+AddMark(mona.Id, subjects[1].Id, 2, currentYear, 4, 3, 4, 2, 16); // اللغة العربية - راسب
+AddMark(mona.Id, subjects[2].Id, 2, currentYear, 2, 5, 3, 4, 14); // العلوم - راسب
+AddMark(mona.Id, subjects[3].Id, 2, currentYear, 3, 4, 2, 3, 15); // اللغة الإنجليزية - راسب
+AddMark(mona.Id, subjects[4].Id, 2, currentYear, 4, 3, 4, 2, 16); // التاريخ - راسب
+AddMark(mona.Id, subjects[5].Id, 2, currentYear, 3, 4, 2, 3, 14); // الجغرافيا - راسب
+
+// ============================================
+// 11. خالد عمر - الصف الثالث - ناجح
+// ============================================
+var khaled = allStudents.First(s => s.Name == "خالد عمر" && s.LocalStudentNumber == 11);
+
+// الفصل الأول - خالد ناجح (السنة الحالية)
+AddMark(khaled.Id, subjects[0].Id, 1, currentYear, 8, 7, 8, 9, 34); // الرياضيات - ناجح
+AddMark(khaled.Id, subjects[1].Id, 1, currentYear, 7, 8, 9, 8, 33); // اللغة العربية - ناجح
+AddMark(khaled.Id, subjects[2].Id, 1, currentYear, 9, 8, 7, 8, 35); // العلوم - ناجح
+AddMark(khaled.Id, subjects[3].Id, 1, currentYear, 8, 9, 8, 7, 34); // اللغة الإنجليزية - ناجح
+AddMark(khaled.Id, subjects[4].Id, 1, currentYear, 7, 8, 9, 8, 32); // التاريخ - ناجح
+AddMark(khaled.Id, subjects[5].Id, 1, currentYear, 8, 9, 8, 7, 33); // الجغرافيا - ناجح
+
+// الفصل الثاني - خالد ناجح ممتاز (السنة الحالية)
+AddMark(khaled.Id, subjects[0].Id, 2, currentYear, 9, 8, 9, 8, 37); // الرياضيات - ممتاز
+AddMark(khaled.Id, subjects[1].Id, 2, currentYear, 8, 9, 8, 9, 36); // اللغة العربية - ممتاز
+AddMark(khaled.Id, subjects[2].Id, 2, currentYear, 9, 8, 9, 9, 38); // العلوم - ممتاز
+AddMark(khaled.Id, subjects[3].Id, 2, currentYear, 8, 9, 8, 9, 37); // اللغة الإنجليزية - ممتاز
+AddMark(khaled.Id, subjects[4].Id, 2, currentYear, 9, 8, 9, 8, 36); // التاريخ - ممتاز
+AddMark(khaled.Id, subjects[5].Id, 2, currentYear, 8, 9, 8, 9, 35); // الجغرافيا - ناجح
+
+// ============================================
+// 12. سارة أحمد - الصف الثالث - راسبة
+// ============================================
+var sara = allStudents.First(s => s.Name == "سارة أحمد" && s.LocalStudentNumber == 12);
+
+// الفصل الأول - سارة راسبة (السنة الحالية)
+AddMark(sara.Id, subjects[0].Id, 1, currentYear, 3, 4, 2, 3, 13); // الرياضيات - راسب
+AddMark(sara.Id, subjects[1].Id, 1, currentYear, 4, 3, 5, 4, 15); // اللغة العربية - راسب
+AddMark(sara.Id, subjects[2].Id, 1, currentYear, 2, 5, 3, 4, 14); // العلوم - راسب
+AddMark(sara.Id, subjects[3].Id, 1, currentYear, 5, 3, 4, 2, 16); // اللغة الإنجليزية - راسب
+AddMark(sara.Id, subjects[4].Id, 1, currentYear, 3, 4, 2, 3, 12); // التاريخ - راسب
+AddMark(sara.Id, subjects[5].Id, 1, currentYear, 4, 3, 5, 4, 15); // الجغرافيا - راسب
+
+// الفصل الثاني - سارة راسبة (السنة الحالية)
+AddMark(sara.Id, subjects[0].Id, 2, currentYear, 4, 3, 5, 4, 17); // الرياضيات - راسب
+AddMark(sara.Id, subjects[1].Id, 2, currentYear, 3, 5, 4, 3, 18); // اللغة العربية - راسب
+AddMark(sara.Id, subjects[2].Id, 2, currentYear, 5, 4, 3, 5, 19); // العلوم - راسب
+AddMark(sara.Id, subjects[3].Id, 2, currentYear, 4, 3, 5, 4, 16); // اللغة الإنجليزية - راسب
+AddMark(sara.Id, subjects[4].Id, 2, currentYear, 3, 5, 4, 3, 17); // التاريخ - راسب
+AddMark(sara.Id, subjects[5].Id, 2, currentYear, 4, 3, 5, 4, 18); // الجغرافيا - راسب
+
+// ============================================
+// 13. محمد علي - الصف الثالث - ناجح ممتاز
+// ============================================
+var mohammad = allStudents.First(s => s.Name == "محمد علي" && s.LocalStudentNumber == 13);
+
+// الفصل الأول - محمد ناجح ممتاز (السنة الحالية)
+AddMark(mohammad.Id, subjects[0].Id, 1, currentYear, 9, 8, 9, 8, 38); // الرياضيات - ممتاز
+AddMark(mohammad.Id, subjects[1].Id, 1, currentYear, 8, 9, 8, 9, 37); // اللغة العربية - ممتاز
+AddMark(mohammad.Id, subjects[2].Id, 1, currentYear, 9, 8, 9, 8, 36); // العلوم - ممتاز
+AddMark(mohammad.Id, subjects[3].Id, 1, currentYear, 8, 9, 8, 9, 38); // اللغة الإنجليزية - ممتاز
+AddMark(mohammad.Id, subjects[4].Id, 1, currentYear, 9, 8, 9, 8, 37); // التاريخ - ممتاز
+AddMark(mohammad.Id, subjects[5].Id, 1, currentYear, 8, 9, 8, 9, 36); // الجغرافيا - ممتاز
+
+// الفصل الثاني - محمد ناجح ممتاز (السنة الحالية)
+AddMark(mohammad.Id, subjects[0].Id, 2, currentYear, 9, 9, 9, 8, 40); // الرياضيات - ممتاز
+AddMark(mohammad.Id, subjects[1].Id, 2, currentYear, 8, 9, 9, 9, 39); // اللغة العربية - ممتاز
+AddMark(mohammad.Id, subjects[2].Id, 2, currentYear, 9, 8, 9, 9, 38); // العلوم - ممتاز
+AddMark(mohammad.Id, subjects[3].Id, 2, currentYear, 9, 9, 8, 9, 39); // اللغة الإنجليزية - ممتاز
+AddMark(mohammad.Id, subjects[4].Id, 2, currentYear, 8, 9, 9, 8, 37); // التاريخ - ممتاز
+AddMark(mohammad.Id, subjects[5].Id, 2, currentYear, 9, 8, 9, 9, 38); // الجغرافيا - ممتاز
+
+// ============================================
+// 14. ريما ناصر - الصف الثالث - ناجحة
+// ============================================
+var rima = allStudents.First(s => s.Name == "ريما ناصر" && s.LocalStudentNumber == 14);
+
+// الفصل الأول - ريما ناجحة (السنة الحالية)
+AddMark(rima.Id, subjects[0].Id, 1, currentYear, 7, 8, 7, 8, 32); // الرياضيات - ناجح
+AddMark(rima.Id, subjects[1].Id, 1, currentYear, 8, 7, 8, 7, 31); // اللغة العربية - ناجح
+AddMark(rima.Id, subjects[2].Id, 1, currentYear, 7, 8, 9, 8, 33); // العلوم - ناجح
+AddMark(rima.Id, subjects[3].Id, 1, currentYear, 8, 7, 8, 9, 34); // اللغة الإنجليزية - ناجح
+AddMark(rima.Id, subjects[4].Id, 1, currentYear, 7, 8, 7, 8, 31); // التاريخ - ناجح
+AddMark(rima.Id, subjects[5].Id, 1, currentYear, 8, 7, 8, 9, 32); // الجغرافيا - ناجح
+
+// الفصل الثاني - ريما ناجحة (السنة الحالية)
+AddMark(rima.Id, subjects[0].Id, 2, currentYear, 8, 9, 8, 9, 36); // الرياضيات - ناجح
+AddMark(rima.Id, subjects[1].Id, 2, currentYear, 9, 8, 9, 8, 35); // اللغة العربية - ناجح
+AddMark(rima.Id, subjects[2].Id, 2, currentYear, 8, 9, 9, 8, 37); // العلوم - ناجح
+AddMark(rima.Id, subjects[3].Id, 2, currentYear, 9, 8, 8, 9, 36); // اللغة الإنجليزية - ناجح
+AddMark(rima.Id, subjects[4].Id, 2, currentYear, 8, 9, 8, 9, 35); // التاريخ - ناجح
+AddMark(rima.Id, subjects[5].Id, 2, currentYear, 9, 8, 9, 8, 36); // الجغرافيا - ناجح
+
+// ============================================
+// 15. حسام يوسف - الصف الثالث - راسب
+// ============================================
+var hossam = allStudents.First(s => s.Name == "حسام يوسف" && s.LocalStudentNumber == 15);
+
+// الفصل الأول - حسام راسب (السنة الحالية)
+AddMark(hossam.Id, subjects[0].Id, 1, currentYear, 2, 3, 4, 2, 10); // الرياضيات - راسب
+AddMark(hossam.Id, subjects[1].Id, 1, currentYear, 3, 2, 3, 4, 12); // اللغة العربية - راسب
+AddMark(hossam.Id, subjects[2].Id, 1, currentYear, 4, 3, 2, 3, 13); // العلوم - راسب
+AddMark(hossam.Id, subjects[3].Id, 1, currentYear, 2, 4, 3, 2, 11); // اللغة الإنجليزية - راسب
+AddMark(hossam.Id, subjects[4].Id, 1, currentYear, 3, 2, 4, 3, 12); // التاريخ - راسب
+AddMark(hossam.Id, subjects[5].Id, 1, currentYear, 2, 4, 3, 2, 10); // الجغرافيا - راسب
+
+// الفصل الثاني - حسام راسب (السنة الحالية)
+AddMark(hossam.Id, subjects[0].Id, 2, currentYear, 3, 4, 2, 3, 14); // الرياضيات - راسب
+AddMark(hossam.Id, subjects[1].Id, 2, currentYear, 4, 3, 4, 2, 15); // اللغة العربية - راسب
+AddMark(hossam.Id, subjects[2].Id, 2, currentYear, 2, 5, 3, 4, 13); // العلوم - راسب
+AddMark(hossam.Id, subjects[3].Id, 2, currentYear, 3, 4, 2, 3, 14); // اللغة الإنجليزية - راسب
+AddMark(hossam.Id, subjects[4].Id, 2, currentYear, 4, 3, 4, 2, 15); // التاريخ - راسب
+AddMark(hossam.Id, subjects[5].Id, 2, currentYear, 3, 4, 2, 3, 13); // الجغرافيا - راسب
+
+// ============================================
+// 16. ناديا سامر - الصف الرابع - ناجحة
+// ============================================
+var nadia = allStudents.First(s => s.Name == "ناديا سامر" && s.LocalStudentNumber == 16);
+
+// الفصل الأول - ناديا ناجحة (السنة الحالية)
+AddMark(nadia.Id, subjects[0].Id, 1, currentYear, 8, 7, 8, 7, 33); // الرياضيات - ناجح
+AddMark(nadia.Id, subjects[1].Id, 1, currentYear, 7, 8, 7, 8, 32); // اللغة العربية - ناجح
+AddMark(nadia.Id, subjects[2].Id, 1, currentYear, 8, 7, 9, 8, 34); // العلوم - ناجح
+AddMark(nadia.Id, subjects[3].Id, 1, currentYear, 7, 8, 8, 7, 31); // اللغة الإنجليزية - ناجح
+AddMark(nadia.Id, subjects[4].Id, 1, currentYear, 8, 7, 8, 7, 32); // التاريخ - ناجح
+AddMark(nadia.Id, subjects[5].Id, 1, currentYear, 7, 8, 8, 7, 30); // الجغرافيا - ناجح
+
+// الفصل الثاني - ناديا ناجحة ممتازة (السنة الحالية)
+AddMark(nadia.Id, subjects[0].Id, 2, currentYear, 9, 8, 9, 8, 37); // الرياضيات - ممتاز
+AddMark(nadia.Id, subjects[1].Id, 2, currentYear, 8, 9, 8, 9, 36); // اللغة العربية - ناجح
+AddMark(nadia.Id, subjects[2].Id, 2, currentYear, 9, 8, 9, 9, 38); // العلوم - ممتاز
+AddMark(nadia.Id, subjects[3].Id, 2, currentYear, 8, 9, 8, 9, 37); // اللغة الإنجليزية - ممتاز
+AddMark(nadia.Id, subjects[4].Id, 2, currentYear, 9, 8, 9, 8, 36); // التاريخ - ناجح
+AddMark(nadia.Id, subjects[5].Id, 2, currentYear, 8, 9, 8, 9, 35); // الجغرافيا - ناجح
+
+// ============================================
+// 17. باسل خضر - الصف الرابع - راسب
+// ============================================
+var basel = allStudents.First(s => s.Name == "باسل خضر" && s.LocalStudentNumber == 17);
+
+// الفصل الأول - باسل راسب (السنة الحالية)
+AddMark(basel.Id, subjects[0].Id, 1, currentYear, 3, 4, 2, 3, 12); // الرياضيات - راسب
+AddMark(basel.Id, subjects[1].Id, 1, currentYear, 4, 3, 5, 4, 14); // اللغة العربية - راسب
+AddMark(basel.Id, subjects[2].Id, 1, currentYear, 2, 5, 3, 4, 13); // العلوم - راسب
+AddMark(basel.Id, subjects[3].Id, 1, currentYear, 5, 3, 4, 2, 15); // اللغة الإنجليزية - راسب
+AddMark(basel.Id, subjects[4].Id, 1, currentYear, 3, 4, 2, 3, 11); // التاريخ - راسب
+AddMark(basel.Id, subjects[5].Id, 1, currentYear, 4, 3, 5, 4, 14); // الجغرافيا - راسب
+
+// الفصل الثاني - باسل راسب (السنة الحالية)
+AddMark(basel.Id, subjects[0].Id, 2, currentYear, 4, 3, 5, 4, 16); // الرياضيات - راسب
+AddMark(basel.Id, subjects[1].Id, 2, currentYear, 3, 5, 4, 3, 17); // اللغة العربية - راسب
+AddMark(basel.Id, subjects[2].Id, 2, currentYear, 5, 4, 3, 5, 18); // العلوم - راسب
+AddMark(basel.Id, subjects[3].Id, 2, currentYear, 4, 3, 5, 4, 15); // اللغة الإنجليزية - راسب
+AddMark(basel.Id, subjects[4].Id, 2, currentYear, 3, 5, 4, 3, 16); // التاريخ - راسب
+AddMark(basel.Id, subjects[5].Id, 2, currentYear, 4, 3, 5, 4, 17); // الجغرافيا - راسب
+
+// ============================================
+// 18. هيا محمد - الصف الرابع - ناجحة ممتازة
+// ============================================
+var haya = allStudents.First(s => s.Name == "هيا محمد" && s.LocalStudentNumber == 18);
+
+// الفصل الأول - هيا ناجحة ممتازة (السنة الحالية)
+AddMark(haya.Id, subjects[0].Id, 1, currentYear, 9, 8, 9, 8, 39); // الرياضيات - ممتاز
+AddMark(haya.Id, subjects[1].Id, 1, currentYear, 8, 9, 8, 9, 38); // اللغة العربية - ممتاز
+AddMark(haya.Id, subjects[2].Id, 1, currentYear, 9, 8, 9, 8, 37); // العلوم - ممتاز
+AddMark(haya.Id, subjects[3].Id, 1, currentYear, 8, 9, 8, 9, 36); // اللغة الإنجليزية - ممتاز
+AddMark(haya.Id, subjects[4].Id, 1, currentYear, 9, 8, 9, 8, 38); // التاريخ - ممتاز
+AddMark(haya.Id, subjects[5].Id, 1, currentYear, 8, 9, 8, 9, 37); // الجغرافيا - ممتاز
+
+// الفصل الثاني - هيا ناجحة ممتازة (السنة الحالية)
+AddMark(haya.Id, subjects[0].Id, 2, currentYear, 9, 9, 9, 9, 40); // الرياضيات - ممتاز
+AddMark(haya.Id, subjects[1].Id, 2, currentYear, 8, 9, 9, 9, 39); // اللغة العربية - ممتاز
+AddMark(haya.Id, subjects[2].Id, 2, currentYear, 9, 8, 9, 9, 40); // العلوم - ممتاز
+AddMark(haya.Id, subjects[3].Id, 2, currentYear, 9, 9, 8, 9, 38); // اللغة الإنجليزية - ممتاز
+AddMark(haya.Id, subjects[4].Id, 2, currentYear, 8, 9, 9, 8, 39); // التاريخ - ممتاز
+AddMark(haya.Id, subjects[5].Id, 2, currentYear, 9, 8, 9, 9, 40); // الجغرافيا - ممتاز
+
+// ============================================
+// 19. رامي ناجي - الصف الرابع - ناجح
+// ============================================
+var rami = allStudents.First(s => s.Name == "رامي ناجي" && s.LocalStudentNumber == 19);
+
+// الفصل الأول - رامي ناجح (السنة الحالية)
+AddMark(rami.Id, subjects[0].Id, 1, currentYear, 7, 8, 7, 8, 32); // الرياضيات - ناجح
+AddMark(rami.Id, subjects[1].Id, 1, currentYear, 8, 7, 8, 7, 33); // اللغة العربية - ناجح
+AddMark(rami.Id, subjects[2].Id, 1, currentYear, 7, 8, 9, 8, 34); // العلوم - ناجح
+AddMark(rami.Id, subjects[3].Id, 1, currentYear, 8, 7, 8, 9, 35); // اللغة الإنجليزية - ناجح
+AddMark(rami.Id, subjects[4].Id, 1, currentYear, 7, 8, 7, 8, 31); // التاريخ - ناجح
+AddMark(rami.Id, subjects[5].Id, 1, currentYear, 8, 7, 8, 9, 32); // الجغرافيا - ناجح
+
+// الفصل الثاني - رامي ناجح ممتاز (السنة الحالية)
+AddMark(rami.Id, subjects[0].Id, 2, currentYear, 8, 9, 8, 9, 36); // الرياضيات - ناجح
+AddMark(rami.Id, subjects[1].Id, 2, currentYear, 9, 8, 9, 8, 37); // اللغة العربية - ممتاز
+AddMark(rami.Id, subjects[2].Id, 2, currentYear, 8, 9, 9, 8, 38); // العلوم - ممتاز
+AddMark(rami.Id, subjects[3].Id, 2, currentYear, 9, 8, 8, 9, 37); // اللغة الإنجليزية - ممتاز
+AddMark(rami.Id, subjects[4].Id, 2, currentYear, 8, 9, 8, 9, 35); // التاريخ - ناجح
+AddMark(rami.Id, subjects[5].Id, 2, currentYear, 9, 8, 9, 8, 36); // الجغرافيا - ناجح
+
+// ============================================
+// 20. سوسن عادل - الصف الرابع - راسبة
+// ============================================
+var sowsan = allStudents.First(s => s.Name == "سوسن عادل" && s.LocalStudentNumber == 20);
+
+// الفصل الأول - سوسن راسبة (السنة الحالية)
+AddMark(sowsan.Id, subjects[0].Id, 1, currentYear, 2, 3, 4, 2, 11); // الرياضيات - راسب
+AddMark(sowsan.Id, subjects[1].Id, 1, currentYear, 3, 2, 3, 4, 12); // اللغة العربية - راسب
+AddMark(sowsan.Id, subjects[2].Id, 1, currentYear, 4, 3, 2, 3, 13); // العلوم - راسب
+AddMark(sowsan.Id, subjects[3].Id, 1, currentYear, 2, 4, 3, 2, 10); // اللغة الإنجليزية - راسب
+AddMark(sowsan.Id, subjects[4].Id, 1, currentYear, 3, 2, 4, 3, 11); // التاريخ - راسب
+AddMark(sowsan.Id, subjects[5].Id, 1, currentYear, 2, 4, 3, 2, 10); // الجغرافيا - راسب
+
+// الفصل الثاني - سوسن راسبة (السنة الحالية)
+AddMark(sowsan.Id, subjects[0].Id, 2, currentYear, 3, 4, 2, 3, 14); // الرياضيات - راسب
+AddMark(sowsan.Id, subjects[1].Id, 2, currentYear, 4, 3, 4, 2, 15); // اللغة العربية - راسب
+AddMark(sowsan.Id, subjects[2].Id, 2, currentYear, 2, 5, 3, 4, 13); // العلوم - راسب
+AddMark(sowsan.Id, subjects[3].Id, 2, currentYear, 3, 4, 2, 3, 12); // اللغة الإنجليزية - راسب
+AddMark(sowsan.Id, subjects[4].Id, 2, currentYear, 4, 3, 4, 2, 14); // التاريخ - راسب
+AddMark(sowsan.Id, subjects[5].Id, 2, currentYear, 3, 4, 2, 3, 13); // الجغرافيا - راسب
+
+// ============================================
+// حفظ جميع العلامات
+// ============================================
+db.Marks.AddRange(marks);
+await db.SaveChangesAsync();
+
+Console.WriteLine($"✅ تم إضافة {marks.Count} علامة لـ {allStudents.Count} طالب");
+Console.WriteLine($"📊 السنة الدراسية: {currentYear}");
+Console.WriteLine($"📚 كل طالب لديه {subjects.Count * 2} علامة (6 مواد × فصلين)");
+
+
+
+Console.WriteLine($"✅ تم إضافة {marks.Count} علامة لـ {allStudents.Count} طالب");
+Console.WriteLine($"📊 كل طالب لديه {subjects.Count * 2} علامة (6 مواد × فصلين)");
+
+Console.WriteLine($"✅ تم إضافة {marks.Count} علامة لـ {allStudents.Count} طالب");
 
         // ============================================
         // 15. إنشاء الكتب

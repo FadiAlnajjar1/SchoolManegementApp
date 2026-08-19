@@ -25,7 +25,7 @@ public class Mark
     public decimal MaxQuiz2 { get; set; }       // العلامة الكاملة للاختبار القصير 2
     public decimal MaxHomework { get; set; }    // العلامة الكاملة للواجب
     public decimal MaxFinalExam { get; set; }   // العلامة الكاملة للامتحان النهائي
-    
+    public int AcademicYear { get; set; }
     public decimal Total { get; set; }
     
     // ✅ ملاحظات (اختيارية)
