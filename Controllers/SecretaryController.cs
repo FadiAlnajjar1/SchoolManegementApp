@@ -80,63 +80,63 @@ public class SecretaryController(
 // جلب جميع الصفوف مع الشعب التابعة لها (نفس تنسيق Manager)
 // ============================================
 
-// [HttpGet("grades")]
-// public async Task<IActionResult> GetGradesWithSections()
-// {
-//     var grades = await db.Grades
-//         .Include(g => g.Sections)
-//         .Where(g => g.SchoolId == SchoolId)
-//         .OrderBy(g => g.Level)
-//         .Select(g => new
-//         {
-//             g.Id,
-//             g.Name,
-//             g.LocalGradeNumber,
-//             g.Level,
-//             g.IsActive,
-//             g.SchoolId,
-//             g.CreatedAt,
-//             Sections = g.Sections
-//                 .OrderBy(s => s.LocalSectionNumber)
-//                 .Select(s => new
-//                 {
-//                     s.Id,
-//                     s.Name,
-//                     s.LocalSectionNumber,
-//                     s.CounselorId,
-//                     LocalCounselorNumber = db.EmployeeSchools
-//                         .Where(es => es.EmployeeId == s.CounselorId && 
-//                                      es.SchoolId == SchoolId && 
-//                                      es.IsActive)
-//                         .Select(es => (int?)es.LocalEmployeeNumber)
-//                         .FirstOrDefault(),
-//                     CounselorName = s.Counselor != null ? s.Counselor.Name : null,
-//                     Teachers = db.TeacherGrades
-//                         .Where(tg => tg.SectionId == s.Id)
-//                         .Select(tg => new
-//                         {
-//                             tg.TeacherId,
-//                             TeacherName = tg.Teacher != null ? tg.Teacher.Name : null,
-//                             LocalTeacherNumber = db.EmployeeSchools
-//                                 .Where(es => es.EmployeeId == tg.TeacherId && 
-//                                              es.SchoolId == SchoolId && 
-//                                              es.IsActive)
-//                                 .Select(es => (int?)es.LocalEmployeeNumber)
-//                                 .FirstOrDefault(),
-//                             tg.SubjectId,
-//                             LocalSubjectId = db.Subjects
-//                                 .Where(sub => sub.Id == tg.SubjectId)
-//                                 .Select(sub => sub.LocalSubjectId)
-//                                 .FirstOrDefault(),
-//                             SubjectName = tg.Subject != null ? tg.Subject.Name : null
-//                         })
-//                         .ToList()
-//                 }).ToList()
-//         })
-//         .ToListAsync();
+[HttpGet("grades with sections")]
+public async Task<IActionResult> GetGradesWithSections()
+{
+    var grades = await db.Grades
+        .Include(g => g.Sections)
+        .Where(g => g.SchoolId == SchoolId)
+        .OrderBy(g => g.Level)
+        .Select(g => new
+        {
+            g.Id,
+            g.Name,
+            g.LocalGradeNumber,
+            g.Level,
+            g.IsActive,
+            g.SchoolId,
+            g.CreatedAt,
+            Sections = g.Sections
+                .OrderBy(s => s.LocalSectionNumber)
+                .Select(s => new
+                {
+                    s.Id,
+                    s.Name,
+                    s.LocalSectionNumber,
+                    s.CounselorId,
+                    LocalCounselorNumber = db.EmployeeSchools
+                        .Where(es => es.EmployeeId == s.CounselorId && 
+                                     es.SchoolId == SchoolId && 
+                                     es.IsActive)
+                        .Select(es => (int?)es.LocalEmployeeNumber)
+                        .FirstOrDefault(),
+                    CounselorName = s.Counselor != null ? s.Counselor.Name : null,
+                    Teachers = db.TeacherGrades
+                        .Where(tg => tg.SectionId == s.Id)
+                        .Select(tg => new
+                        {
+                            tg.TeacherId,
+                            TeacherName = tg.Teacher != null ? tg.Teacher.Name : null,
+                            LocalTeacherNumber = db.EmployeeSchools
+                                .Where(es => es.EmployeeId == tg.TeacherId && 
+                                             es.SchoolId == SchoolId && 
+                                             es.IsActive)
+                                .Select(es => (int?)es.LocalEmployeeNumber)
+                                .FirstOrDefault(),
+                            tg.SubjectId,
+                            LocalSubjectId = db.Subjects
+                                .Where(sub => sub.Id == tg.SubjectId)
+                                .Select(sub => sub.LocalSubjectId)
+                                .FirstOrDefault(),
+                            SubjectName = tg.Subject != null ? tg.Subject.Name : null
+                        })
+                        .ToList()
+                }).ToList()
+        })
+        .ToListAsync();
 
-//     return Ok(grades);
-// }
+    return Ok(grades);
+}
 
     [HttpGet("announcements")]
     public async Task<IActionResult> GetAnnouncements()

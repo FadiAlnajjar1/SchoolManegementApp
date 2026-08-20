@@ -11,6 +11,7 @@ using Microsoft.OpenApi.Models;
 using SchoolManagement.Api.Auth;
 using SchoolManagement.Api.Data;
 using SchoolManagement.Api.Services;
+using Npgsql; // ✅ إضافة PostgreSQL
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -37,8 +38,21 @@ builder.Services.AddControllers().AddJsonOptions(options =>
     options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
 });
 
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("Default")));
+// ✅ اختيار قاعدة البيانات حسب البيئة
+var environment = builder.Environment.EnvironmentName;
+
+if (environment == "Development")
+{
+    // ✅ SQL Server محلياً (على جهازك)
+    builder.Services.AddDbContext<AppDbContext>(options =>
+        options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+}
+else
+{
+    // ✅ PostgreSQL على السيرفر
+    builder.Services.AddDbContext<AppDbContext>(options =>
+        options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+}
 
 builder.Services.AddScoped<NotificationService>();  // ✅ إضافة الخدمة
 
@@ -90,7 +104,7 @@ builder.Services.AddSwaggerGen(options =>
     {
         Title = "School Management System API",
         Version = "v1",
-        Description = "نظام إدارة المدارس — وزارة التربية السورية (.NET 10 + SQL Server)",
+        Description = "نظام إدارة المدارس — وزارة التربية السورية (.NET 10 + SQL Server/PostgreSQL)",
     });
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
@@ -112,8 +126,6 @@ builder.Services.AddSwaggerGen(options =>
         },
     });
 });
-
-
 
 var app = builder.Build();
 

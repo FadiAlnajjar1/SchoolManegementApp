@@ -1412,16 +1412,15 @@ public async Task<IActionResult> TransferEmployee(TransferEmployeeLocalRequest r
     if (!Enum.IsDefined(typeof(EmployeeRole), request.NewRole))
         return BadRequest(new { message = "الوظيفة غير صالحة" });
 
-    // ✅ التحقق من عدم وجوده بالفعل في المدرسة الجديدة
+    // ✅ 1. التحقق من وجود الموظف في المدرسة الجديدة (يشمل السجلات غير النشطة)
     var existingInNewSchool = await db.EmployeeSchools
-        .AnyAsync(es => es.EmployeeId == employee.Id &&
-                       es.SchoolId == request.NewSchoolId &&
-                       es.IsActive);
+        .FirstOrDefaultAsync(es => es.EmployeeId == employee.Id &&
+                                  es.SchoolId == request.NewSchoolId);
 
-    if (existingInNewSchool)
+    if (existingInNewSchool != null && existingInNewSchool.IsActive)
         return BadRequest(new { message = "الموظف موجود بالفعل في المدرسة الجديدة" });
 
-    // ✅ التحقق من الأدوار الفريدة في المدرسة الجديدة
+    // ✅ 2. التحقق من الأدوار الفريدة في المدرسة الجديدة
     if (IsUniqueRole(request.NewRole))
     {
         var existingRole = await db.EmployeeSchools
@@ -1434,7 +1433,7 @@ public async Task<IActionResult> TransferEmployee(TransferEmployeeLocalRequest r
             return BadRequest(new { message = $"الوظيفة '{GetRoleName(request.NewRole)}' مشغولة بالفعل في المدرسة الجديدة" });
     }
 
-    // ✅ حساب رقم موظف جديد للمدرسة الجديدة
+    // ✅ 3. حساب رقم محلي جديد (أول رقم غير مستخدم)
     var usedNumbers = await db.EmployeeSchools
         .Where(es => es.SchoolId == request.NewSchoolId)
         .Select(es => es.LocalEmployeeNumber)
@@ -1446,27 +1445,37 @@ public async Task<IActionResult> TransferEmployee(TransferEmployeeLocalRequest r
         newLocalNumber++;
     }
 
-    // ✅ 1. إلغاء تنشيط الربط القديم
+    // ✅ 4. إلغاء تنشيط الربط القديم
     oldEmployeeSchool.IsActive = false;
 
-    // ✅ 2. إنشاء ربط جديد في المدرسة الجديدة
-    var newEmployeeSchool = new EmployeeSchool
+    // ✅ 5. معالجة الربط في المدرسة الجديدة
+    if (existingInNewSchool != null && !existingInNewSchool.IsActive)
     {
-        EmployeeId = employee.Id,
-        SchoolId = request.NewSchoolId,
-        LocalEmployeeNumber = newLocalNumber,
-        Role = request.NewRole,
-        IsActive = true,
-        CreatedAt = DateTime.UtcNow
-    };
+        // ✅ إذا كان هناك سجل غير نشط، قم بتحديثه بدلاً من إنشاء جديد
+        existingInNewSchool.IsActive = true;
+        existingInNewSchool.Role = request.NewRole;
+        existingInNewSchool.LocalEmployeeNumber = newLocalNumber;
+        existingInNewSchool.CreatedAt = DateTime.UtcNow;
+    }
+    else
+    {
+        // ✅ إنشاء ربط جديد
+        var newEmployeeSchool = new EmployeeSchool
+        {
+            EmployeeId = employee.Id,
+            SchoolId = request.NewSchoolId,
+            LocalEmployeeNumber = newLocalNumber,
+            Role = request.NewRole,
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+        db.EmployeeSchools.Add(newEmployeeSchool);
+    }
 
-    db.EmployeeSchools.Add(newEmployeeSchool);
-
-    // ✅ 3. إذا كان معلم، أضف TeacherAssignment للمدرسة الجديدة فقط
-    // ❌ لا تنقل TeacherGrades أو TeacherSubjects أو صفوف أو شعب أو طلاب!
+    // ✅ 6. معالجة TeacherAssignment
     if (request.NewRole == EmployeeRole.Teacher)
     {
-        // ✅ حذف TeacherAssignment القديم (إن وجد)
+        // حذف TeacherAssignment القديم
         var oldAssignment = await db.TeacherAssignments
             .FirstOrDefaultAsync(t => t.EmployeeId == employee.Id && 
                                      t.SchoolId == currentSchoolId);
@@ -1474,7 +1483,7 @@ public async Task<IActionResult> TransferEmployee(TransferEmployeeLocalRequest r
         if (oldAssignment is not null)
             db.TeacherAssignments.Remove(oldAssignment);
 
-        // ✅ أضف TeacherAssignment جديد للمدرسة الجديدة فقط
+        // إضافة TeacherAssignment جديد
         db.TeacherAssignments.Add(new TeacherAssignment
         {
             EmployeeId = employee.Id,
@@ -1483,7 +1492,7 @@ public async Task<IActionResult> TransferEmployee(TransferEmployeeLocalRequest r
     }
     else
     {
-        // ❌ إذا لم يعد معلم، احذف جميع TeacherAssignments
+        // إذا لم يعد معلم، احذف TeacherAssignments
         var oldAssignments = await db.TeacherAssignments
             .Where(t => t.EmployeeId == employee.Id && t.SchoolId == currentSchoolId)
             .ToListAsync();
@@ -1506,7 +1515,7 @@ public async Task<IActionResult> TransferEmployee(TransferEmployeeLocalRequest r
     return Ok(new
     {
         success = true,
-        message = "تم نقل الموظف بنجاح (بدون نقل البيانات المرتبطة)",
+        message = "تم نقل الموظف بنجاح",
         data = new
         {
             employee = new
