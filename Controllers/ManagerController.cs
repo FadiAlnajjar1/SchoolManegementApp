@@ -24,107 +24,176 @@ public class ManagerController(
     // إدارة الصفوف (Grades) - باستخدام LocalGradeNumber
     // ============================================
 
-   [HttpPost("grades")]
-public async Task<IActionResult> CreateGrade(GradeRequest request)
-{
-    var school = await db.Schools.FindAsync(SchoolId);
-    if (school is null)
-        return BadRequest(new { message = "المدرسة غير موجودة" });
-
-    // ✅ التحقق من أن المستوى بين 1 و 12
-    if (request.Level < 1 || request.Level > 12)
-        return BadRequest(new { message = "المستوى يجب أن يكون بين 1 و 12" });
-
-    // ✅ التحقق من وجود صف بنفس المستوى (بدون AcademicYear)
-    var existingGrade = await db.Grades
-        .AnyAsync(g => g.Level == request.Level && g.SchoolId == SchoolId);
-
-    if (existingGrade)
-        return BadRequest(new { 
-            message = $"الصف {GetGradeNameByLevel(request.Level)} موجود بالفعل" 
-        });
-
-    // ✅ حساب LocalGradeNumber
-    var usedNumbers = await db.Grades
-        .Where(g => g.SchoolId == SchoolId)
-        .Select(g => g.LocalGradeNumber)
-        .ToListAsync();
-
-    int newLocalNumber = 1;
-    while (usedNumbers.Contains(newLocalNumber))
+    [HttpPost("grades")]
+    public async Task<IActionResult> CreateGrade(GradeRequest request)
     {
-        newLocalNumber++;
+        var school = await db.Schools.FindAsync(SchoolId);
+        if (school is null)
+            return BadRequest(new { message = "المدرسة غير موجودة" });
+
+        if (request.Level < 1 || request.Level > 12)
+            return BadRequest(new { message = "المستوى يجب أن يكون بين 1 و 12" });
+
+        var existingGrade = await db.Grades
+            .AnyAsync(g => g.Level == request.Level && g.SchoolId == SchoolId);
+
+        if (existingGrade)
+            return BadRequest(new { 
+                message = $"الصف {GetGradeNameByLevel(request.Level)} موجود بالفعل" 
+            });
+
+        var usedNumbers = await db.Grades
+            .Where(g => g.SchoolId == SchoolId)
+            .Select(g => g.LocalGradeNumber)
+            .ToListAsync();
+
+        int newLocalNumber = 1;
+        while (usedNumbers.Contains(newLocalNumber))
+        {
+            newLocalNumber++;
+        }
+
+        var gradeName = GetGradeNameByLevel(request.Level);
+
+        var grade = new Grade
+        {
+            SchoolId = SchoolId,
+            Name = gradeName,
+            Level = request.Level,
+            LocalGradeNumber = newLocalNumber,
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        db.Grades.Add(grade);
+        await db.SaveChangesAsync();
+
+        return Created($"api/manager/grades/{grade.LocalGradeNumber}", new
+        {
+            message = $"تم إنشاء {gradeName} بنجاح",
+            grade = new
+            {
+                grade.Id,
+                grade.Name,
+                grade.Level,
+                grade.LocalGradeNumber,
+                grade.IsActive,
+                grade.SchoolId,
+                SchoolName = school.Name
+            }
+        });
     }
 
-    var gradeName = GetGradeNameByLevel(request.Level);
-
-    var grade = new Grade
+    private string GetGradeNameByLevel(int level)
     {
-        SchoolId = SchoolId,
-        Name = gradeName,
-        Level = request.Level,
-        LocalGradeNumber = newLocalNumber,
-        // ❌ حذف: AcademicYear = currentYear,
-        IsActive = true,
-        CreatedAt = DateTime.UtcNow
-    };
+        return level switch
+        {
+            1 => "الصف الأول",
+            2 => "الصف الثاني",
+            3 => "الصف الثالث",
+            4 => "الصف الرابع",
+            5 => "الصف الخامس",
+            6 => "الصف السادس",
+            7 => "الصف السابع",
+            8 => "الصف الثامن",
+            9 => "الصف التاسع",
+            10 => "الصف العاشر",
+            11 => "الصف الحادي عشر",
+            12 => "الصف الثاني عشر",
+            _ => $"الصف {level}"
+        };
+    }
 
-    db.Grades.Add(grade);
-    await db.SaveChangesAsync();
-
-    return Created($"api/manager/grades/{grade.LocalGradeNumber}", new
+    [HttpGet("grades")]
+    public async Task<IActionResult> GetGrades()
     {
-        message = $"تم إنشاء {gradeName} بنجاح",
-        grade = new
+        var grades = await db.Grades
+            .Include(g => g.Sections)
+            .Where(g => g.SchoolId == SchoolId)
+            .OrderBy(g => g.Level)
+            .Select(g => new
+            {
+                g.Id,
+                g.Name,
+                g.LocalGradeNumber,
+                g.Level,
+                g.IsActive,
+                g.SchoolId,
+                g.CreatedAt,
+                Sections = g.Sections
+                    .Where(s => s.SchoolId == SchoolId)
+                    .OrderBy(s => s.LocalSectionNumber)
+                    .Select(s => new
+                    {
+                        s.Id,
+                        s.Name,
+                        s.LocalSectionNumber,
+                        s.CounselorId,
+                        LocalCounselorNumber = db.EmployeeSchools
+                            .Where(es => es.EmployeeId == s.CounselorId && 
+                                         es.SchoolId == SchoolId && 
+                                         es.IsActive)
+                            .Select(es => (int?)es.LocalEmployeeNumber)
+                            .FirstOrDefault(),
+                        CounselorName = s.Counselor != null ? s.Counselor.Name : null,
+                        Teachers = db.TeacherGrades
+                            .Where(tg => tg.SectionId == s.Id &&
+                                         tg.Teacher != null &&
+                                         db.EmployeeSchools.Any(es => es.EmployeeId == tg.TeacherId && 
+                                                                     es.SchoolId == SchoolId && 
+                                                                     es.IsActive))
+                            .Select(tg => new
+                            {
+                                tg.TeacherId,
+                                TeacherName = tg.Teacher != null ? tg.Teacher.Name : null,
+                                LocalTeacherNumber = db.EmployeeSchools
+                                    .Where(es => es.EmployeeId == tg.TeacherId && 
+                                                 es.SchoolId == SchoolId && 
+                                                 es.IsActive)
+                                    .Select(es => (int?)es.LocalEmployeeNumber)
+                                    .FirstOrDefault(),
+                                tg.SubjectId,
+                                LocalSubjectId = db.Subjects
+                                    .Where(sub => sub.Id == tg.SubjectId && sub.SchoolId == SchoolId)
+                                    .Select(sub => sub.LocalSubjectId)
+                                    .FirstOrDefault(),
+                                SubjectName = tg.Subject != null ? tg.Subject.Name : null
+                            })
+                            .ToList()
+                    }).ToList()
+            })
+            .ToListAsync();
+
+        return Ok(grades);
+    }
+
+    [HttpGet("grades/{localGradeNumber:int}")]
+    public async Task<IActionResult> GetGrade(int localGradeNumber)
+    {
+        var grade = await db.Grades
+            .Include(g => g.Sections)
+                .ThenInclude(s => s.TeacherGrades)
+                    .ThenInclude(tg => tg.Teacher)
+            .Include(g => g.Sections)
+                .ThenInclude(s => s.TeacherGrades)
+                    .ThenInclude(tg => tg.Subject)
+            .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                      g.LocalGradeNumber == localGradeNumber);
+
+        if (grade is null)
+            return NotFound(new { message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" });
+
+        var result = new
         {
             grade.Id,
             grade.Name,
-            grade.Level,
             grade.LocalGradeNumber,
+            grade.Level,
             grade.IsActive,
             grade.SchoolId,
-            SchoolName = school.Name
-        }
-    });
-}
-
-private string GetGradeNameByLevel(int level)
-{
-    return level switch
-    {
-        1 => "الصف الأول",
-        2 => "الصف الثاني",
-        3 => "الصف الثالث",
-        4 => "الصف الرابع",
-        5 => "الصف الخامس",
-        6 => "الصف السادس",
-        7 => "الصف السابع",
-        8 => "الصف الثامن",
-        9 => "الصف التاسع",
-        10 => "الصف العاشر",
-        11 => "الصف الحادي عشر",
-        12 => "الصف الثاني عشر",
-        _ => $"الصف {level}"
-    };
-}
-
-[HttpGet("grades")]
-public async Task<IActionResult> GetGrades()
-{
-    var grades = await db.Grades
-        .Include(g => g.Sections)
-        .Where(g => g.SchoolId == SchoolId)
-        .OrderBy(g => g.Level)
-        .Select(g => new
-        {
-            g.Id,
-            g.Name,
-            g.LocalGradeNumber,
-            g.Level,
-            g.IsActive,
-            g.SchoolId,
-            g.CreatedAt,
-            Sections = g.Sections
+            grade.CreatedAt,
+            Sections = grade.Sections
+                .Where(s => s.SchoolId == SchoolId)
                 .OrderBy(s => s.LocalSectionNumber)
                 .Select(s => new
                 {
@@ -139,12 +208,15 @@ public async Task<IActionResult> GetGrades()
                         .Select(es => (int?)es.LocalEmployeeNumber)
                         .FirstOrDefault(),
                     CounselorName = s.Counselor != null ? s.Counselor.Name : null,
-                    Teachers = db.TeacherGrades
-                        .Where(tg => tg.SectionId == s.Id)
+                    Teachers = s.TeacherGrades
+                        .Where(tg => tg.Teacher != null &&
+                                     db.EmployeeSchools.Any(es => es.EmployeeId == tg.TeacherId && 
+                                                                 es.SchoolId == SchoolId && 
+                                                                 es.IsActive))
                         .Select(tg => new
                         {
                             tg.TeacherId,
-                            TeacherName = tg.Teacher!.Name,
+                            TeacherName = tg.Teacher != null ? tg.Teacher.Name : null,
                             LocalTeacherNumber = db.EmployeeSchools
                                 .Where(es => es.EmployeeId == tg.TeacherId && 
                                              es.SchoolId == SchoolId && 
@@ -153,330 +225,206 @@ public async Task<IActionResult> GetGrades()
                                 .FirstOrDefault(),
                             tg.SubjectId,
                             LocalSubjectId = db.Subjects
-                                .Where(sub => sub.Id == tg.SubjectId)
+                                .Where(sub => sub.Id == tg.SubjectId && sub.SchoolId == SchoolId)
                                 .Select(sub => sub.LocalSubjectId)
                                 .FirstOrDefault(),
-                            SubjectName = tg.Subject!.Name
-                        })
-                        .ToList()
+                            SubjectName = tg.Subject != null ? tg.Subject.Name : null,
+                            tg.CreatedAt
+                        }).ToList()
                 }).ToList()
-        })
-        .ToListAsync();
+        };
 
-    return Ok(grades);
-}
-
-[HttpGet("grades/{localGradeNumber:int}")]
-public async Task<IActionResult> GetGrade(int localGradeNumber)
-{
-    var grade = await db.Grades
-        .Include(g => g.Sections)
-            .ThenInclude(s => s.TeacherGrades)
-                .ThenInclude(tg => tg.Teacher)
-        .Include(g => g.Sections)
-            .ThenInclude(s => s.TeacherGrades)
-                .ThenInclude(tg => tg.Subject)
-        .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
-                                  g.LocalGradeNumber == localGradeNumber);
-
-    if (grade is null)
-        return NotFound(new { message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" });
-
-    var result = new
-    {
-        grade.Id,
-        grade.Name,
-        grade.LocalGradeNumber,
-        grade.Level,
-        grade.IsActive,
-        grade.SchoolId,
-        grade.CreatedAt,
-        Sections = grade.Sections
-            .OrderBy(s => s.LocalSectionNumber)
-            .Select(s => new
-            {
-                s.Id,
-                s.Name,
-                s.LocalSectionNumber,
-                s.CounselorId,
-                LocalCounselorNumber = db.EmployeeSchools
-                    .Where(es => es.EmployeeId == s.CounselorId && 
-                                 es.SchoolId == SchoolId && 
-                                 es.IsActive)
-                    .Select(es => (int?)es.LocalEmployeeNumber)
-                    .FirstOrDefault(),
-                CounselorName = s.Counselor != null ? s.Counselor.Name : null,
-                Teachers = s.TeacherGrades.Select(tg => new
-                {
-                    tg.TeacherId,
-                    TeacherName = tg.Teacher!.Name,
-                    LocalTeacherNumber = db.EmployeeSchools
-                        .Where(es => es.EmployeeId == tg.TeacherId && 
-                                     es.SchoolId == SchoolId && 
-                                     es.IsActive)
-                        .Select(es => (int?)es.LocalEmployeeNumber)
-                        .FirstOrDefault(),
-                    tg.SubjectId,
-                    LocalSubjectId = db.Subjects
-                        .Where(sub => sub.Id == tg.SubjectId)
-                        .Select(sub => sub.LocalSubjectId)
-                        .FirstOrDefault(),
-                    SubjectName = tg.Subject!.Name,
-                    tg.CreatedAt
-                }).ToList()
-            }).ToList()
-    };
-
-    return Ok(result);
-}
-
-[HttpPut("grades/{localGradeNumber:int}")]
-public async Task<IActionResult> UpdateGrade(int localGradeNumber, GradeRequest request)
-{
-    var grade = await db.Grades
-        .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
-                                  g.LocalGradeNumber == localGradeNumber);
-
-    if (grade is null)
-        return NotFound(new { message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" });
-
-    if (request.Level < 1 || request.Level > 12)
-        return BadRequest(new { message = "المستوى يجب أن يكون بين 1 و 12" });
-
-    if (request.Level != grade.Level)
-    {
-        var existingLevel = await db.Grades
-            .AnyAsync(g => g.Level == request.Level && g.SchoolId == SchoolId);
-        
-        if (existingLevel)
-            return BadRequest(new { message = $"المستوى {request.Level} موجود بالفعل" });
+        return Ok(result);
     }
 
-    grade.Level = request.Level;
-    grade.Name = GetGradeNameByLevel(request.Level);
-
-    await db.SaveChangesAsync();
-
-    return Ok(new
+    [HttpPut("grades/{localGradeNumber:int}")]
+    public async Task<IActionResult> UpdateGrade(int localGradeNumber, GradeRequest request)
     {
-        message = $"تم تحديث الصف إلى {grade.Name} بنجاح",
-        grade = new
+        var grade = await db.Grades
+            .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                      g.LocalGradeNumber == localGradeNumber);
+
+        if (grade is null)
+            return NotFound(new { message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" });
+
+        if (request.Level < 1 || request.Level > 12)
+            return BadRequest(new { message = "المستوى يجب أن يكون بين 1 و 12" });
+
+        if (request.Level != grade.Level)
         {
-            grade.Id,
-            grade.Name,
-            grade.LocalGradeNumber,
-            grade.Level,
-            grade.IsActive,
-            grade.SchoolId
+            var existingLevel = await db.Grades
+                .AnyAsync(g => g.Level == request.Level && g.SchoolId == SchoolId);
+            
+            if (existingLevel)
+                return BadRequest(new { message = $"المستوى {request.Level} موجود بالفعل" });
         }
-    });
-}
+
+        grade.Level = request.Level;
+        grade.Name = GetGradeNameByLevel(request.Level);
+
+        await db.SaveChangesAsync();
+
+        return Ok(new
+        {
+            message = $"تم تحديث الصف إلى {grade.Name} بنجاح",
+            grade = new
+            {
+                grade.Id,
+                grade.Name,
+                grade.LocalGradeNumber,
+                grade.Level,
+                grade.IsActive,
+                grade.SchoolId
+            }
+        });
+    }
 
     [HttpDelete("grades/{localGradeNumber:int}")]
-public async Task<IActionResult> DeleteGrade(int localGradeNumber)
-{
-    var grade = await db.Grades
-        .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
-                                  g.LocalGradeNumber == localGradeNumber);
-
-    if (grade is null)
-        return NotFound(new { message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" });
-
-    // ✅ 1. جلب جميع الشعب في هذا الصف
-    var sections = await db.Sections
-        .Include(s => s.TeacherGrades)
-        .Include(s => s.Students)
-        .Where(s => s.GradeId == grade.Id)
-        .ToListAsync();
-
-    // ✅ 2. جلب جميع الطلاب في هذه الشعب
-    var studentIds = sections
-        .SelectMany(s => s.Students ?? new List<Student>())
-        .Select(s => s.Id)
-        .ToList();
-
-    // ✅ 3. حذف العلامات (Marks) المرتبطة بالطلاب
-    if (studentIds.Any())
+    public async Task<IActionResult> DeleteGrade(int localGradeNumber)
     {
-        var marks = await db.Marks
-            .Where(m => studentIds.Contains(m.StudentId))
+        var grade = await db.Grades
+            .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                      g.LocalGradeNumber == localGradeNumber);
+
+        if (grade is null)
+            return NotFound(new { message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" });
+
+        var sections = await db.Sections
+            .Include(s => s.TeacherGrades)
+            .Include(s => s.Students)
+            .Where(s => s.GradeId == grade.Id)
             .ToListAsync();
 
-        if (marks.Any())
-            db.Marks.RemoveRange(marks);
-    }
+        var studentIds = sections
+            .SelectMany(s => s.Students ?? new List<Student>())
+            .Select(s => s.Id)
+            .ToList();
 
-    // ✅ 4. حذف ActivityRegistrations المرتبطة بالطلاب
-    if (studentIds.Any())
-    {
-        var activityRegistrations = await db.ActivityRegistrations
-            .Where(r => studentIds.Contains(r.StudentId))
-            .ToListAsync();
-
-        if (activityRegistrations.Any())
-            db.ActivityRegistrations.RemoveRange(activityRegistrations);
-    }
-
-    // ✅ 5. حذف TeacherGrades المرتبطة بالشعب
-    var allTeacherGrades = sections
-        .SelectMany(s => s.TeacherGrades ?? new List<TeacherGrade>())
-        .ToList();
-
-    if (allTeacherGrades.Any())
-        db.TeacherGrades.RemoveRange(allTeacherGrades);
-
-    // ✅ 6. حذف SubjectIds المرتبطة (إذا لم تعد مستخدمة)
-    var subjectIds = allTeacherGrades
-        .Select(tg => tg.SubjectId)
-        .Distinct()
-        .ToList();
-
-    foreach (var subjectId in subjectIds)
-    {
-        var hasOtherGrades = await db.TeacherGrades
-            .AnyAsync(tg => tg.SubjectId == subjectId);
-
-        if (!hasOtherGrades)
+        if (studentIds.Any())
         {
-            var subject = await db.Subjects
-                .FirstOrDefaultAsync(s => s.Id == subjectId && s.SchoolId == SchoolId);
+            var marks = await db.Marks
+                .Where(m => studentIds.Contains(m.StudentId))
+                .ToListAsync();
+            if (marks.Any())
+                db.Marks.RemoveRange(marks);
 
-            if (subject is not null)
+            var activityRegistrations = await db.ActivityRegistrations
+                .Where(r => studentIds.Contains(r.StudentId))
+                .ToListAsync();
+            if (activityRegistrations.Any())
+                db.ActivityRegistrations.RemoveRange(activityRegistrations);
+        }
+
+        var allTeacherGrades = sections
+            .SelectMany(s => s.TeacherGrades ?? new List<TeacherGrade>())
+            .ToList();
+
+        if (allTeacherGrades.Any())
+            db.TeacherGrades.RemoveRange(allTeacherGrades);
+
+        var subjectIds = allTeacherGrades
+            .Select(tg => tg.SubjectId)
+            .Distinct()
+            .ToList();
+
+        foreach (var subjectId in subjectIds)
+        {
+            var hasOtherGrades = await db.TeacherGrades
+                .AnyAsync(tg => tg.SubjectId == subjectId);
+
+            if (!hasOtherGrades)
             {
-                var teacherSubjects = await db.TeacherSubjects
-                    .Where(ts => ts.SubjectId == subjectId)
-                    .ToListAsync();
+                var subject = await db.Subjects
+                    .FirstOrDefaultAsync(s => s.Id == subjectId && s.SchoolId == SchoolId);
 
-                if (teacherSubjects.Any())
-                    db.TeacherSubjects.RemoveRange(teacherSubjects);
+                if (subject is not null)
+                {
+                    var teacherSubjects = await db.TeacherSubjects
+                        .Where(ts => ts.SubjectId == subjectId)
+                        .ToListAsync();
 
-                db.Subjects.Remove(subject);
+                    if (teacherSubjects.Any())
+                        db.TeacherSubjects.RemoveRange(teacherSubjects);
+
+                    db.Subjects.Remove(subject);
+                }
             }
         }
+
+        if (studentIds.Any())
+        {
+            var bookLoans = await db.BookLoans
+                .Where(l => studentIds.Contains(l.StudentId))
+                .ToListAsync();
+            if (bookLoans.Any())
+                db.BookLoans.RemoveRange(bookLoans);
+
+            var bookReservations = await db.BookReservations
+                .Where(r => studentIds.Contains(r.StudentId))
+                .ToListAsync();
+            if (bookReservations.Any())
+                db.BookReservations.RemoveRange(bookReservations);
+
+            var gradeHistory = await db.StudentGradeHistory
+                .Where(h => studentIds.Contains(h.StudentId))
+                .ToListAsync();
+            if (gradeHistory.Any())
+                db.StudentGradeHistory.RemoveRange(gradeHistory);
+
+            var attendances = await db.StudentAttendances
+                .Where(a => studentIds.Contains(a.StudentId))
+                .ToListAsync();
+            if (attendances.Any())
+                db.StudentAttendances.RemoveRange(attendances);
+
+            var warnings = await db.Warnings
+                .Where(w => studentIds.Contains(w.StudentId))
+                .ToListAsync();
+            if (warnings.Any())
+                db.Warnings.RemoveRange(warnings);
+
+            var summons = await db.GuardianSummons
+                .Where(s => studentIds.Contains(s.StudentId))
+                .ToListAsync();
+            if (summons.Any())
+                db.GuardianSummons.RemoveRange(summons);
+
+            var notifications = await db.Notifications
+                .Where(n => studentIds.Contains(n.UserId) && n.UserType == UserType.Student)
+                .ToListAsync();
+            if (notifications.Any())
+                db.Notifications.RemoveRange(notifications);
+
+            var complaints = await db.Complaints
+                .Where(c => studentIds.Contains(c.FromUserId) && c.FromUserType == UserType.Student)
+                .ToListAsync();
+            if (complaints.Any())
+                db.Complaints.RemoveRange(complaints);
+        }
+
+        foreach (var section in sections)
+        {
+            if (section.Students != null && section.Students.Any())
+                db.Students.RemoveRange(section.Students);
+        }
+
+        if (sections.Any())
+            db.Sections.RemoveRange(sections);
+
+        db.Grades.Remove(grade);
+        await db.SaveChangesAsync();
+
+        return Ok(new
+        {
+            message = "تم حذف الصف وجميع البيانات المرتبطة بنجاح",
+            localGradeNumber = localGradeNumber,
+            gradeName = grade.Name,
+            deletedSections = sections.Count,
+            deletedTeacherGrades = allTeacherGrades.Count,
+            deletedStudents = studentIds.Count,
+            deletedSubjects = subjectIds.Count
+        });
     }
-
-    // ✅ 7. حذف BookLoans و BookReservations للطلاب
-    if (studentIds.Any())
-    {
-        var bookLoans = await db.BookLoans
-            .Where(l => studentIds.Contains(l.StudentId))
-            .ToListAsync();
-
-        if (bookLoans.Any())
-            db.BookLoans.RemoveRange(bookLoans);
-
-        var bookReservations = await db.BookReservations
-            .Where(r => studentIds.Contains(r.StudentId))
-            .ToListAsync();
-
-        if (bookReservations.Any())
-            db.BookReservations.RemoveRange(bookReservations);
-    }
-
-    // ✅ 8. حذف StudentGradeHistory للطلاب
-    if (studentIds.Any())
-    {
-        var gradeHistory = await db.StudentGradeHistory
-            .Where(h => studentIds.Contains(h.StudentId))
-            .ToListAsync();
-
-        if (gradeHistory.Any())
-            db.StudentGradeHistory.RemoveRange(gradeHistory);
-    }
-
-    // ✅ 9. حذف StudentAttendances للطلاب
-    if (studentIds.Any())
-    {
-        var attendances = await db.StudentAttendances
-            .Where(a => studentIds.Contains(a.StudentId))
-            .ToListAsync();
-
-        if (attendances.Any())
-            db.StudentAttendances.RemoveRange(attendances);
-    }
-
-    // ✅ 10. حذف Warnings للطلاب
-    if (studentIds.Any())
-    {
-        var warnings = await db.Warnings
-            .Where(w => studentIds.Contains(w.StudentId))
-            .ToListAsync();
-
-        if (warnings.Any())
-            db.Warnings.RemoveRange(warnings);
-    }
-
-    // ✅ 11. حذف Punishments للطلاب
-    // if (studentIds.Any())
-    // {
-    //     var punishments = await db.Punishments
-    //         .Where(p => studentIds.Contains(p.StudentId))
-    //         .ToListAsync();
-
-    //     if (punishments.Any())
-    //         db.Punishments.RemoveRange(punishments);
-    // }
-
-    // ✅ 12. حذف GuardianSummons للطلاب
-    if (studentIds.Any())
-    {
-        var summons = await db.GuardianSummons
-            .Where(s => studentIds.Contains(s.StudentId))
-            .ToListAsync();
-
-        if (summons.Any())
-            db.GuardianSummons.RemoveRange(summons);
-    }
-
-    // ✅ 13. حذف Notifications للطلاب
-    if (studentIds.Any())
-    {
-        var notifications = await db.Notifications
-            .Where(n => studentIds.Contains(n.UserId) && n.UserType == UserType.Student)
-            .ToListAsync();
-
-        if (notifications.Any())
-            db.Notifications.RemoveRange(notifications);
-    }
-
-    // ✅ 14. حذف Complaints للطلاب
-    if (studentIds.Any())
-    {
-        var complaints = await db.Complaints
-            .Where(c => studentIds.Contains(c.FromUserId) && c.FromUserType == UserType.Student)
-            .ToListAsync();
-
-        if (complaints.Any())
-            db.Complaints.RemoveRange(complaints);
-    }
-
-    // ✅ 15. حذف الطلاب
-    foreach (var section in sections)
-    {
-        if (section.Students != null && section.Students.Any())
-            db.Students.RemoveRange(section.Students);
-    }
-
-    // ✅ 16. حذف الشعب
-    if (sections.Any())
-        db.Sections.RemoveRange(sections);
-
-    // ✅ 17. حذف الصف
-    db.Grades.Remove(grade);
-    await db.SaveChangesAsync();
-
-    return Ok(new
-    {
-        message = "تم حذف الصف وجميع البيانات المرتبطة بنجاح",
-        localGradeNumber = localGradeNumber,
-        gradeName = grade.Name,
-        deletedSections = sections.Count,
-        deletedTeacherGrades = allTeacherGrades.Count,
-        deletedStudents = studentIds.Count,
-        deletedSubjects = subjectIds.Count
-    });
-}
-
 
     // ============================================
     // إدارة الشعب (Sections) - باستخدام Local IDs
@@ -609,298 +557,296 @@ public async Task<IActionResult> DeleteGrade(int localGradeNumber)
     // ============================================
 
     [HttpGet("at-risk-students")]
-public async Task<IActionResult> GetAtRiskStudents(
-    [FromQuery] decimal threshold = 50,
-    [FromQuery] int? localGradeNumber = null,
-    [FromQuery] int? localSectionNumber = null,
-    [FromQuery] int? semester = null)
-{
-    var currentYear = DateTime.Now.Year; // ✅ السنة الحالية
-    
-    var markConfig = await db.MarkConfigs
-        .FirstOrDefaultAsync(c => c.SchoolId == SchoolId);
-
-    var passPercent = markConfig?.PassPercent ?? 50;
-
-    var query = db.Students
-        .Include(s => s.Section)
-            .ThenInclude(sec => sec!.Grade)
-        .Where(s => s.SchoolId == SchoolId && s.IsActive);
-
-    if (localGradeNumber.HasValue)
+    public async Task<IActionResult> GetAtRiskStudents(
+        [FromQuery] decimal threshold = 50,
+        [FromQuery] int? localGradeNumber = null,
+        [FromQuery] int? localSectionNumber = null,
+        [FromQuery] int? semester = null)
     {
-        query = query.Where(s => s.Section != null && 
-                                 s.Section.Grade != null && 
-                                 s.Section.Grade.LocalGradeNumber == localGradeNumber.Value);
-    }
+        var currentYear = DateTime.Now.Year;
+        
+        var markConfig = await db.MarkConfigs
+            .FirstOrDefaultAsync(c => c.SchoolId == SchoolId);
 
-    if (localSectionNumber.HasValue)
-    {
-        query = query.Where(s => s.Section != null && 
-                                 s.Section.LocalSectionNumber == localSectionNumber.Value);
-    }
+        var passPercent = markConfig?.PassPercent ?? 50;
 
-    var students = await query.ToListAsync();
+        var query = db.Students
+            .Include(s => s.Section)
+                .ThenInclude(sec => sec!.Grade)
+            .Where(s => s.SchoolId == SchoolId && s.IsActive);
 
-    var subjects = await db.Subjects
-        .Where(s => s.SchoolId == SchoolId)
-        .Select(s => new
+        if (localGradeNumber.HasValue)
         {
-            s.Id,
-            s.LocalSubjectId,
-            s.Name
-        })
-        .ToListAsync();
-
-    var subjectIds = subjects.Select(s => s.Id).ToList();
-
-    var atRiskStudents = new List<AtRiskStudentDto>();
-
-    foreach (var student in students)
-    {
-        // ✅ فلترة العلامات حسب السنة
-        var marksQuery = db.Marks
-            .Where(m => m.StudentId == student.Id && 
-                        subjectIds.Contains(m.SubjectId) &&
-                        m.AcademicYear == currentYear); // ✅
-
-        if (semester.HasValue)
-        {
-            marksQuery = marksQuery.Where(m => m.Semester == semester.Value);
+            query = query.Where(s => s.Section != null && 
+                                     s.Section.Grade != null && 
+                                     s.Section.Grade.LocalGradeNumber == localGradeNumber.Value);
         }
 
-        var marks = await marksQuery
-            .Include(m => m.Subject)
+        if (localSectionNumber.HasValue)
+        {
+            query = query.Where(s => s.Section != null && 
+                                     s.Section.LocalSectionNumber == localSectionNumber.Value);
+        }
+
+        var students = await query.ToListAsync();
+
+        var subjects = await db.Subjects
+            .Where(s => s.SchoolId == SchoolId)
+            .Select(s => new
+            {
+                s.Id,
+                s.LocalSubjectId,
+                s.Name
+            })
             .ToListAsync();
 
-        if (marks.Any())
+        var subjectIds = subjects.Select(s => s.Id).ToList();
+
+        var atRiskStudents = new List<AtRiskStudentDto>();
+
+        foreach (var student in students)
         {
-            var average = marks.Average(m => m.Total);
-            
-            if (average < threshold)
+            var marksQuery = db.Marks
+                .Where(m => m.StudentId == student.Id && 
+                            subjectIds.Contains(m.SubjectId) &&
+                            m.AcademicYear == currentYear);
+
+            if (semester.HasValue)
             {
-                var lastReport = await db.PerformanceReports
-                    .Where(r => r.StudentId == student.Id)
-                    .OrderByDescending(r => r.CreatedAt)
-                    .Select(r => new { r.Behavior, r.Notes, r.CreatedAt })
-                    .FirstOrDefaultAsync();
+                marksQuery = marksQuery.Where(m => m.Semester == semester.Value);
+            }
 
-                var failedSubjects = marks.Count(m => m.Total < passPercent);
-                var passedSubjects = marks.Count - failedSubjects;
+            var marks = await marksQuery
+                .Include(m => m.Subject)
+                .ToListAsync();
 
-                var subjectMarks = marks.Select(m => new SubjectMarkDto
+            if (marks.Any())
+            {
+                var average = marks.Average(m => m.Total);
+                
+                if (average < threshold)
                 {
-                    SubjectId = m.SubjectId,
-                    LocalSubjectId = m.Subject != null ? m.Subject.LocalSubjectId : 0,
-                    SubjectName = m.Subject != null ? m.Subject.Name : "غير معروف",
-                    Total = m.Total,
-                    IsPassed = m.Total >= passPercent,
-                    Semester = m.Semester
-                }).ToList();
+                    var lastReport = await db.PerformanceReports
+                        .Where(r => r.StudentId == student.Id)
+                        .OrderByDescending(r => r.CreatedAt)
+                        .Select(r => new { r.Behavior, r.Notes, r.CreatedAt })
+                        .FirstOrDefaultAsync();
 
-                atRiskStudents.Add(new AtRiskStudentDto
+                    var failedSubjects = marks.Count(m => m.Total < passPercent);
+                    var passedSubjects = marks.Count - failedSubjects;
+
+                    var subjectMarks = marks.Select(m => new SubjectMarkDto
+                    {
+                        SubjectId = m.SubjectId,
+                        LocalSubjectId = m.Subject != null ? m.Subject.LocalSubjectId : 0,
+                        SubjectName = m.Subject != null ? m.Subject.Name : "غير معروف",
+                        Total = m.Total,
+                        IsPassed = m.Total >= passPercent,
+                        Semester = m.Semester
+                    }).ToList();
+
+                    atRiskStudents.Add(new AtRiskStudentDto
+                    {
+                        Id = student.Id,
+                        Name = student.Name,
+                        Email = student.Email,
+                        LocalStudentNumber = student.LocalStudentNumber,
+                        SectionName = student.Section?.Name,
+                        LocalSectionNumber = student.Section?.LocalSectionNumber ?? 0,
+                        GradeName = student.Section?.Grade?.Name,
+                        LocalGradeNumber = student.Section?.Grade?.LocalGradeNumber ?? 0,
+                        GuardianName = student.GuardianName,
+                        GuardianPhone = student.GuardianPhone,
+                        Average = Math.Round(average, 2),
+                        Threshold = threshold,
+                        TotalMarks = marks.Count,
+                        FailedSubjects = failedSubjects,
+                        PassedSubjects = passedSubjects,
+                        LastReport = lastReport,
+                        SubjectMarks = subjectMarks
+                    });
+                }
+            }
+        }
+
+        var totalStudents = students.Count;
+        var totalAtRisk = atRiskStudents.Count;
+        var averageAtRisk = totalAtRisk > 0 ? Math.Round(atRiskStudents.Average(s => s.Average), 2) : 0;
+        var percentageAtRisk = totalStudents > 0 ? Math.Round((double)totalAtRisk / totalStudents * 100, 2) : 0;
+
+        var minAverage = totalAtRisk > 0 ? atRiskStudents.Min(s => s.Average) : 0;
+        var maxAverage = totalAtRisk > 0 ? atRiskStudents.Max(s => s.Average) : 0;
+
+        return Ok(new
+        {
+            success = true,
+            message = "تم جلب الطلاب المعرضين للخطر بنجاح",
+            data = new
+            {
+                ReportInfo = new
                 {
-                    Id = student.Id,
-                    Name = student.Name,
-                    Email = student.Email,
-                    LocalStudentNumber = student.LocalStudentNumber,
+                    GeneratedAt = DateTime.UtcNow,
+                    SchoolId = SchoolId,
+                    PassPercent = passPercent,
+                    Threshold = threshold,
+                    Semester = semester,
+                    AcademicYear = currentYear
+                },
+                Statistics = new
+                {
+                    TotalStudents = totalStudents,
+                    TotalAtRisk = totalAtRisk,
+                    AverageAtRisk = averageAtRisk,
+                    PercentageAtRisk = percentageAtRisk,
+                    MinAverage = minAverage,
+                    MaxAverage = maxAverage
+                },
+                Filters = new
+                {
+                    LocalGradeNumber = localGradeNumber,
+                    LocalSectionNumber = localSectionNumber,
+                    Semester = semester,
+                    AcademicYear = currentYear
+                },
+                Students = atRiskStudents
+                    .OrderBy(s => s.Average)
+                    .ToList()
+            }
+        });
+    }
+
+    [HttpGet("at-risk-students/{localStudentNumber:int}")]
+    public async Task<IActionResult> GetAtRiskStudentDetails(int localStudentNumber)
+    {
+        var currentYear = DateTime.Now.Year;
+        
+        var student = await db.Students
+            .Include(s => s.Section)
+                .ThenInclude(sec => sec!.Grade)
+            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
+                                      s.LocalStudentNumber == localStudentNumber);
+
+        if (student is null)
+            return NotFound(new { success = false, message = $"لا يوجد طالب برقم {localStudentNumber}" });
+
+        var subjectIds = await db.Subjects
+            .Where(s => s.SchoolId == SchoolId)
+            .Select(s => s.Id)
+            .ToListAsync();
+
+        var marks = await db.Marks
+            .Where(m => m.StudentId == student.Id && 
+                        subjectIds.Contains(m.SubjectId) &&
+                        m.AcademicYear == currentYear)
+            .Include(m => m.Subject)
+            .Select(m => new
+            {
+                m.Id,
+                m.SubjectId,
+                SubjectName = m.Subject != null ? m.Subject.Name : null,
+                LocalSubjectId = m.Subject != null ? m.Subject.LocalSubjectId : 0,
+                m.Semester,
+                m.Oral,
+                m.Quiz1,
+                m.Quiz2,
+                m.Homework,
+                m.FinalExam,
+                m.Total,
+                IsPassed = m.Total >= 50,
+                m.UpdatedAt
+            })
+            .ToListAsync();
+
+        var average = marks.Any() ? Math.Round(marks.Average(m => m.Total), 2) : 0;
+        var failedSubjects = marks.Count(m => !m.IsPassed);
+        var passedSubjects = marks.Count(m => m.IsPassed);
+
+        var performanceReports = await db.PerformanceReports
+            .Where(r => r.StudentId == student.Id)
+            .OrderByDescending(r => r.CreatedAt)
+            .Select(r => new
+            {
+                r.Id,
+                r.SubjectId,
+                SubjectName = r.Subject != null ? r.Subject.Name : null,
+                LocalSubjectId = r.Subject != null ? r.Subject.LocalSubjectId : 0,
+                r.Semester,
+                r.Behavior,
+                r.Notes,
+                r.CreatedAt
+            })
+            .ToListAsync();
+
+        var attendance = await db.StudentAttendances
+            .Where(a => a.StudentId == student.Id)
+            .OrderByDescending(a => a.Date)
+            .Take(100)
+            .Select(a => new
+            {
+                a.Date,
+                a.Status
+            })
+            .ToListAsync();
+
+        var totalAttendance = attendance.Count;
+        var presentCount = attendance.Count(a => a.Status == AttendanceStatus.Present);
+        var absentCount = attendance.Count(a => a.Status == AttendanceStatus.Absent);
+        var attendancePercentage = totalAttendance > 0 
+            ? Math.Round((double)presentCount / totalAttendance * 100, 2) 
+            : 0;
+
+        var warnings = await db.Warnings
+            .Where(w => w.StudentId == student.Id)
+            .OrderByDescending(w => w.CreatedAt)
+            .Select(w => new
+            {
+                w.Id,
+                w.Type,
+                w.Reason,
+                w.CreatedAt
+            })
+            .ToListAsync();
+
+        return Ok(new
+        {
+            success = true,
+            message = "تم جلب تفاصيل الطالب المعرض للخطر بنجاح",
+            data = new
+            {
+                Student = new
+                {
+                    student.Id,
+                    student.Name,
+                    student.Email,
+                    student.LocalStudentNumber,
                     SectionName = student.Section?.Name,
                     LocalSectionNumber = student.Section?.LocalSectionNumber ?? 0,
                     GradeName = student.Section?.Grade?.Name,
                     LocalGradeNumber = student.Section?.Grade?.LocalGradeNumber ?? 0,
-                    GuardianName = student.GuardianName,
-                    GuardianPhone = student.GuardianPhone,
-                    Average = Math.Round(average, 2),
-                    Threshold = threshold,
+                    student.GuardianName,
+                    student.GuardianPhone,
+                    student.BirthDate,
+                    student.Address
+                },
+                Statistics = new
+                {
                     TotalMarks = marks.Count,
-                    FailedSubjects = failedSubjects,
+                    Average = average,
                     PassedSubjects = passedSubjects,
-                    LastReport = lastReport,
-                    SubjectMarks = subjectMarks
-                });
+                    FailedSubjects = failedSubjects,
+                    TotalAttendance = totalAttendance,
+                    AttendancePercentage = attendancePercentage,
+                    TotalWarnings = warnings.Count,
+                    TotalReports = performanceReports.Count,
+                    AcademicYear = currentYear
+                },
+                Marks = marks.OrderByDescending(m => m.Semester).ThenBy(m => m.SubjectName).ToList(),
+                PerformanceReports = performanceReports,
+                Attendance = attendance.Take(30).ToList(),
+                Warnings = warnings
             }
-        }
+        });
     }
-
-    var totalStudents = students.Count;
-    var totalAtRisk = atRiskStudents.Count;
-    var averageAtRisk = totalAtRisk > 0 ? Math.Round(atRiskStudents.Average(s => s.Average), 2) : 0;
-    var percentageAtRisk = totalStudents > 0 ? Math.Round((double)totalAtRisk / totalStudents * 100, 2) : 0;
-
-    var minAverage = totalAtRisk > 0 ? atRiskStudents.Min(s => s.Average) : 0;
-    var maxAverage = totalAtRisk > 0 ? atRiskStudents.Max(s => s.Average) : 0;
-
-    return Ok(new
-    {
-        success = true,
-        message = "تم جلب الطلاب المعرضين للخطر بنجاح",
-        data = new
-        {
-            ReportInfo = new
-            {
-                GeneratedAt = DateTime.UtcNow,
-                SchoolId = SchoolId,
-                PassPercent = passPercent,
-                Threshold = threshold,
-                Semester = semester,
-                AcademicYear = currentYear // ✅ إضافة السنة للتقرير
-            },
-            Statistics = new
-            {
-                TotalStudents = totalStudents,
-                TotalAtRisk = totalAtRisk,
-                AverageAtRisk = averageAtRisk,
-                PercentageAtRisk = percentageAtRisk,
-                MinAverage = minAverage,
-                MaxAverage = maxAverage
-            },
-            Filters = new
-            {
-                LocalGradeNumber = localGradeNumber,
-                LocalSectionNumber = localSectionNumber,
-                Semester = semester,
-                AcademicYear = currentYear // ✅ إضافة السنة للفلاتر
-            },
-            Students = atRiskStudents
-                .OrderBy(s => s.Average)
-                .ToList()
-        }
-    });
-}
-
-    [HttpGet("at-risk-students/{localStudentNumber:int}")]
-public async Task<IActionResult> GetAtRiskStudentDetails(int localStudentNumber)
-{
-    var currentYear = DateTime.Now.Year; // ✅ السنة الحالية
-    
-    var student = await db.Students
-        .Include(s => s.Section)
-            .ThenInclude(sec => sec!.Grade)
-        .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
-                                  s.LocalStudentNumber == localStudentNumber);
-
-    if (student is null)
-        return NotFound(new { success = false, message = $"لا يوجد طالب برقم {localStudentNumber}" });
-
-    var subjectIds = await db.Subjects
-        .Where(s => s.SchoolId == SchoolId)
-        .Select(s => s.Id)
-        .ToListAsync();
-
-    // ✅ فلترة العلامات حسب السنة
-    var marks = await db.Marks
-        .Where(m => m.StudentId == student.Id && 
-                    subjectIds.Contains(m.SubjectId) &&
-                    m.AcademicYear == currentYear) // ✅
-        .Include(m => m.Subject)
-        .Select(m => new
-        {
-            m.Id,
-            m.SubjectId,
-            SubjectName = m.Subject != null ? m.Subject.Name : null,
-            LocalSubjectId = m.Subject != null ? m.Subject.LocalSubjectId : 0,
-            m.Semester,
-            m.Oral,
-            m.Quiz1,
-            m.Quiz2,
-            m.Homework,
-            m.FinalExam,
-            m.Total,
-            IsPassed = m.Total >= 50,
-            m.UpdatedAt
-        })
-        .ToListAsync();
-
-    var average = marks.Any() ? Math.Round(marks.Average(m => m.Total), 2) : 0;
-    var failedSubjects = marks.Count(m => !m.IsPassed);
-    var passedSubjects = marks.Count(m => m.IsPassed);
-
-    var performanceReports = await db.PerformanceReports
-        .Where(r => r.StudentId == student.Id)
-        .OrderByDescending(r => r.CreatedAt)
-        .Select(r => new
-        {
-            r.Id,
-            r.SubjectId,
-            SubjectName = r.Subject != null ? r.Subject.Name : null,
-            LocalSubjectId = r.Subject != null ? r.Subject.LocalSubjectId : 0,
-            r.Semester,
-            r.Behavior,
-            r.Notes,
-            r.CreatedAt
-        })
-        .ToListAsync();
-
-    var attendance = await db.StudentAttendances
-        .Where(a => a.StudentId == student.Id)
-        .OrderByDescending(a => a.Date)
-        .Take(100)
-        .Select(a => new
-        {
-            a.Date,
-            a.Status
-        })
-        .ToListAsync();
-
-    var totalAttendance = attendance.Count;
-    var presentCount = attendance.Count(a => a.Status == AttendanceStatus.Present);
-    var absentCount = attendance.Count(a => a.Status == AttendanceStatus.Absent);
-    var attendancePercentage = totalAttendance > 0 
-        ? Math.Round((double)presentCount / totalAttendance * 100, 2) 
-        : 0;
-
-    var warnings = await db.Warnings
-        .Where(w => w.StudentId == student.Id)
-        .OrderByDescending(w => w.CreatedAt)
-        .Select(w => new
-        {
-            w.Id,
-            w.Type,
-            w.Reason,
-            w.CreatedAt
-        })
-        .ToListAsync();
-
-    return Ok(new
-    {
-        success = true,
-        message = "تم جلب تفاصيل الطالب المعرض للخطر بنجاح",
-        data = new
-        {
-            Student = new
-            {
-                student.Id,
-                student.Name,
-                student.Email,
-                student.LocalStudentNumber,
-                SectionName = student.Section?.Name,
-                LocalSectionNumber = student.Section?.LocalSectionNumber ?? 0,
-                GradeName = student.Section?.Grade?.Name,
-                LocalGradeNumber = student.Section?.Grade?.LocalGradeNumber ?? 0,
-                student.GuardianName,
-                student.GuardianPhone,
-                student.BirthDate,
-                student.Address
-            },
-            Statistics = new
-            {
-                TotalMarks = marks.Count,
-                Average = average,
-                PassedSubjects = passedSubjects,
-                FailedSubjects = failedSubjects,
-                TotalAttendance = totalAttendance,
-                AttendancePercentage = attendancePercentage,
-                TotalWarnings = warnings.Count,
-                TotalReports = performanceReports.Count,
-                AcademicYear = currentYear // ✅ إضافة السنة للإحصائيات
-            },
-            Marks = marks.OrderByDescending(m => m.Semester).ThenBy(m => m.SubjectName).ToList(),
-            PerformanceReports = performanceReports,
-            Attendance = attendance.Take(30).ToList(),
-            Warnings = warnings
-        }
-    });
-}
 
     [HttpGet("grades/{localGradeNumber:int}/sections/{localSectionNumber:int}")]
     public async Task<IActionResult> GetSection(int localGradeNumber, int localSectionNumber)
@@ -944,24 +890,29 @@ public async Task<IActionResult> GetAtRiskStudentDetails(int localStudentNumber)
                 .Select(es => (int?)es.LocalEmployeeNumber)
                 .FirstOrDefault(),
             CounselorName = section.Counselor != null ? section.Counselor.Name : null,
-            Teachers = section.TeacherGrades.Select(tg => new
-            {
-                tg.TeacherId,
-                TeacherName = tg.Teacher != null ? tg.Teacher.Name : null,
-                LocalTeacherNumber = db.EmployeeSchools
-                    .Where(es => es.EmployeeId == tg.TeacherId && 
-                                 es.SchoolId == SchoolId && 
-                                 es.IsActive)
-                    .Select(es => (int?)es.LocalEmployeeNumber)
-                    .FirstOrDefault(),
-                tg.SubjectId,
-                LocalSubjectId = db.Subjects
-                    .Where(sub => sub.Id == tg.SubjectId)
-                    .Select(sub => sub.LocalSubjectId)
-                    .FirstOrDefault(),
-                SubjectName = tg.Subject != null ? tg.Subject.Name : null,
-                CreatedAt = tg.CreatedAt
-            }).ToList()
+            Teachers = section.TeacherGrades
+                .Where(tg => tg.Teacher != null &&
+                             db.EmployeeSchools.Any(es => es.EmployeeId == tg.TeacherId && 
+                                                         es.SchoolId == SchoolId && 
+                                                         es.IsActive))
+                .Select(tg => new
+                {
+                    tg.TeacherId,
+                    TeacherName = tg.Teacher != null ? tg.Teacher.Name : null,
+                    LocalTeacherNumber = db.EmployeeSchools
+                        .Where(es => es.EmployeeId == tg.TeacherId && 
+                                     es.SchoolId == SchoolId && 
+                                     es.IsActive)
+                        .Select(es => (int?)es.LocalEmployeeNumber)
+                        .FirstOrDefault(),
+                    tg.SubjectId,
+                    LocalSubjectId = db.Subjects
+                        .Where(sub => sub.Id == tg.SubjectId && sub.SchoolId == SchoolId)
+                        .Select(sub => sub.LocalSubjectId)
+                        .FirstOrDefault(),
+                    SubjectName = tg.Subject != null ? tg.Subject.Name : null,
+                    CreatedAt = tg.CreatedAt
+                }).ToList()
         });
     }
 
@@ -1141,11 +1092,11 @@ public async Task<IActionResult> GetAtRiskStudentDetails(int localStudentNumber)
                 s.LocalSubjectId,
                 s.SchoolId,
                 Teachers = db.TeacherSubjects
-                    .Where(t => t.SubjectId == s.Id)
+                    .Where(t => t.SubjectId == s.Id && t.SchoolId == SchoolId)
                     .Select(t => new
                     {
                         t.TeacherId,
-                        TeacherName = t.Teacher!.Name,
+                        TeacherName = t.Teacher != null ? t.Teacher.Name : null,
                         LocalTeacherNumber = db.EmployeeSchools
                             .Where(es => es.EmployeeId == t.TeacherId && 
                                          es.SchoolId == SchoolId && 
@@ -1156,17 +1107,16 @@ public async Task<IActionResult> GetAtRiskStudentDetails(int localStudentNumber)
                     })
                     .ToList(),
                 Sections = db.TeacherGrades
-                    .Where(tg => tg.SubjectId == s.Id)
+                    .Where(tg => tg.SubjectId == s.Id &&
+                                 tg.Section != null &&
+                                 tg.Section.SchoolId == SchoolId)
                     .Select(tg => new
                     {
                         tg.SectionId,
                         SectionName = tg.Section != null ? tg.Section.Name : null,
                         LocalSectionNumber = tg.Section != null ? tg.Section.LocalSectionNumber : 0,
-                        GradeId = tg.Section != null ? tg.Section.GradeId : 0,
-                        LocalGradeNumber = tg.Section != null && tg.Section.Grade != null ? 
-                            tg.Section.Grade.LocalGradeNumber : 0,
-                        GradeName = tg.Section != null && tg.Section.Grade != null ?
-                            tg.Section.Grade.Name : null,
+                        GradeName = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.Name : null,
+                        LocalGradeNumber = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.LocalGradeNumber : 0,
                         TeacherId = tg.TeacherId,
                         TeacherName = tg.Teacher != null ? tg.Teacher.Name : null,
                         LocalTeacherNumber = db.EmployeeSchools
@@ -1188,59 +1138,54 @@ public async Task<IActionResult> GetAtRiskStudentDetails(int localStudentNumber)
     public async Task<IActionResult> GetSubject(int localSubjectId)
     {
         var subject = await db.Subjects
-            .Include(s => s.Teacher)
-            .Include(s => s.TeacherSubjects)
-                .ThenInclude(ts => ts.Teacher)
-            .Include(s => s.TeacherGrades)
-                .ThenInclude(tg => tg.Teacher)
-            .Include(s => s.TeacherGrades)
-                .ThenInclude(tg => tg.Section)
-                    .ThenInclude(sec => sec!.Grade)
             .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
                                       s.LocalSubjectId == localSubjectId);
 
         if (subject is null)
             return NotFound(new { message = $"لا توجد مادة برقم {localSubjectId} في هذه المدرسة" });
 
-        var teachers = subject.TeacherSubjects != null ? 
-            subject.TeacherSubjects
-                .Select(ts => new
-                {
-                    ts.TeacherId,
-                    TeacherName = ts.Teacher?.Name,
-                    LocalTeacherNumber = db.EmployeeSchools
-                        .Where(es => es.EmployeeId == ts.TeacherId && 
-                                     es.SchoolId == SchoolId && 
-                                     es.IsActive)
-                        .Select(es => (int?)es.LocalEmployeeNumber)
-                        .FirstOrDefault(),
-                    ts.CreatedAt
-                })
-                .ToList<object>() : new List<object>();
+        var teachers = await db.TeacherSubjects
+            .Where(ts => ts.SubjectId == subject.Id && ts.SchoolId == SchoolId)
+            .Include(ts => ts.Teacher)
+            .Select(ts => new
+            {
+                ts.TeacherId,
+                TeacherName = ts.Teacher != null ? ts.Teacher.Name : null,
+                LocalTeacherNumber = db.EmployeeSchools
+                    .Where(es => es.EmployeeId == ts.TeacherId && 
+                                 es.SchoolId == SchoolId && 
+                                 es.IsActive)
+                    .Select(es => (int?)es.LocalEmployeeNumber)
+                    .FirstOrDefault(),
+                ts.CreatedAt
+            })
+            .ToListAsync();
 
-        var sections = subject.TeacherGrades != null ?
-            subject.TeacherGrades
-                .Select(tg => new
-                {
-                    tg.SectionId,
-                    SectionName = tg.Section?.Name,
-                    LocalSectionNumber = tg.Section != null ? tg.Section.LocalSectionNumber : 0,
-                    GradeId = tg.Section != null ? tg.Section.GradeId : 0,
-                    LocalGradeNumber = tg.Section != null && tg.Section.Grade != null ? 
-                        tg.Section.Grade.LocalGradeNumber : 0,
-                    GradeName = tg.Section != null && tg.Section.Grade != null ?
-                        tg.Section.Grade.Name : null,
-                    TeacherId = tg.TeacherId,
-                    TeacherName = tg.Teacher?.Name,
-                    LocalTeacherNumber = db.EmployeeSchools
-                        .Where(es => es.EmployeeId == tg.TeacherId && 
-                                     es.SchoolId == SchoolId && 
-                                     es.IsActive)
-                        .Select(es => (int?)es.LocalEmployeeNumber)
-                        .FirstOrDefault(),
-                    tg.CreatedAt
-                })
-                .ToList<object>() : new List<object>();
+        var sections = await db.TeacherGrades
+            .Where(tg => tg.SubjectId == subject.Id &&
+                         tg.Section != null &&
+                         tg.Section.SchoolId == SchoolId)
+            .Include(tg => tg.Teacher)
+            .Include(tg => tg.Section)
+                .ThenInclude(s => s!.Grade)
+            .Select(tg => new
+            {
+                tg.SectionId,
+                SectionName = tg.Section != null ? tg.Section.Name : null,
+                LocalSectionNumber = tg.Section != null ? tg.Section.LocalSectionNumber : 0,
+                GradeName = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.Name : null,
+                LocalGradeNumber = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.LocalGradeNumber : 0,
+                TeacherId = tg.TeacherId,
+                TeacherName = tg.Teacher != null ? tg.Teacher.Name : null,
+                LocalTeacherNumber = db.EmployeeSchools
+                    .Where(es => es.EmployeeId == tg.TeacherId && 
+                                 es.SchoolId == SchoolId && 
+                                 es.IsActive)
+                    .Select(es => (int?)es.LocalEmployeeNumber)
+                    .FirstOrDefault(),
+                tg.CreatedAt
+            })
+            .ToListAsync();
 
         return Ok(new
         {
@@ -1248,19 +1193,8 @@ public async Task<IActionResult> GetAtRiskStudentDetails(int localStudentNumber)
             subject.Name,
             subject.LocalSubjectId,
             subject.SchoolId,
-            TeacherId = subject.TeacherId,
-            TeacherName = subject.Teacher?.Name,
-            LocalTeacherNumber = subject.TeacherId.HasValue ? 
-                await db.EmployeeSchools
-                    .Where(es => es.EmployeeId == subject.TeacherId.Value && 
-                                 es.SchoolId == SchoolId && 
-                                 es.IsActive)
-                    .Select(es => (int?)es.LocalEmployeeNumber)
-                    .FirstOrDefaultAsync() : null,
             Teachers = teachers,
-            Sections = sections,
-            CreatedAt = subject.TeacherSubjects != null && subject.TeacherSubjects.Any() ? 
-                subject.TeacherSubjects.First().CreatedAt : DateTime.UtcNow
+            Sections = sections
         });
     }
 
@@ -1329,430 +1263,422 @@ public async Task<IActionResult> GetAtRiskStudentDetails(int localStudentNumber)
     }
 
     // ============================================
-    // ربط المعلم بالمادة (باستخدام Local IDs)
-    // ============================================
-
-    // [HttpPost("assign-teacher-to-subject")]
-    // public async Task<IActionResult> AssignTeacherToSubject(TeacherSubjectLocalRequest request)
-    // {
-    //     var teacherSchool = await db.EmployeeSchools
-    //         .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
-    //                                    es.LocalEmployeeNumber == request.TeacherLocalNumber &&
-    //                                    es.Role == EmployeeRole.Teacher &&
-    //                                    es.IsActive);
-
-    //     if (teacherSchool is null)
-    //         return BadRequest(new { message = $"لا يوجد معلم برقم {request.TeacherLocalNumber} في هذه المدرسة" });
-
-    //     var subject = await db.Subjects
-    //         .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
-    //                                   s.LocalSubjectId == request.LocalSubjectId);
-
-    //     if (subject is null)
-    //         return BadRequest(new { message = $"لا توجد مادة برقم {request.LocalSubjectId} في هذه المدرسة" });
-
-    //     var teacherId = teacherSchool.EmployeeId;
-    //     var subjectId = subject.Id;
-
-    //     var exists = await db.TeacherSubjects
-    //         .AnyAsync(t => t.TeacherId == teacherId && t.SubjectId == subjectId);
-
-    //     if (exists)
-    //         return BadRequest(new { message = "هذا المعلم مرتبط بالفعل بهذه المادة" });
-
-    //     var maxLocalId = await db.TeacherSubjects
-    //         .Where(ts => ts.SchoolId == SchoolId)
-    //         .Select(ts => (int?)ts.LocalTeacherSubjectId)
-    //         .MaxAsync() ?? 0;
-
-    //     int newLocalId = maxLocalId + 1;
-
-    //     var teacherSubject = new TeacherSubject
-    //     {
-    //         TeacherId = teacherId,
-    //         SubjectId = subjectId,
-    //         SchoolId = SchoolId,
-    //         LocalTeacherSubjectId = newLocalId,
-    //         CreatedAt = DateTime.UtcNow
-    //     };
-
-    //     db.TeacherSubjects.Add(teacherSubject);
-    //     await db.SaveChangesAsync();
-
-    //     var teacher = await db.Employees.FindAsync(teacherId);
-
-    //     return Ok(new
-    //     {
-    //         message = "تم ربط المعلم بالمادة بنجاح",
-    //         teacherLocalNumber = request.TeacherLocalNumber,
-    //         teacherName = teacher?.Name,
-    //         localSubjectId = request.LocalSubjectId,
-    //         subjectName = subject.Name,
-    //         localTeacherSubjectId = newLocalId
-    //     });
-    // }
-
-    // ============================================
     // ربط المعلم بالشعبة (باستخدام Local IDs)
     // ============================================
 
+    [HttpPost("assign-teacher-to-section")]
+    public async Task<IActionResult> AssignTeacherToSection(TeacherGradeLocalRequest request)
+    {
+        var teacherSchool = await db.EmployeeSchools
+            .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
+                                       es.LocalEmployeeNumber == request.TeacherLocalNumber &&
+                                       es.Role == EmployeeRole.Teacher &&
+                                       es.IsActive);
+
+        if (teacherSchool is null)
+            return BadRequest(new { message = $"لا يوجد معلم برقم {request.TeacherLocalNumber} في هذه المدرسة" });
+
+        var subject = await db.Subjects
+            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                      s.LocalSubjectId == request.LocalSubjectId);
+
+        if (subject is null)
+            return BadRequest(new { message = $"لا توجد مادة برقم {request.LocalSubjectId} في هذه المدرسة" });
+
+        var grade = await db.Grades
+            .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                      g.LocalGradeNumber == request.LocalGradeNumber);
+
+        if (grade is null)
+            return BadRequest(new { message = $"لا يوجد صف برقم {request.LocalGradeNumber} في هذه المدرسة" });
+
+        var section = await db.Sections
+            .Include(s => s.Grade)
+            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
+                                      s.LocalSectionNumber == request.LocalSectionNumber &&
+                                      s.GradeId == grade.Id);
+
+        if (section is null)
+            return BadRequest(new { 
+                message = $"لا توجد شعبة برقم {request.LocalSectionNumber} في الصف {request.LocalGradeNumber}" 
+            });
+
+        var teacherId = teacherSchool.EmployeeId;
+        var subjectId = subject.Id;
+
+        var exists = await db.TeacherGrades
+            .AnyAsync(tg => tg.TeacherId == teacherId &&
+                           tg.SubjectId == subjectId &&
+                           tg.SectionId == section.Id);
+
+        if (exists)
+            return BadRequest(new { message = "هذا المعلم مرتبط بالفعل بهذه المادة في هذه الشعبة" });
+
+        var teacherGrade = new TeacherGrade
+        {
+            TeacherId = teacherId,
+            SubjectId = subjectId,
+            SectionId = section.Id
+        };
+
+        db.TeacherGrades.Add(teacherGrade);
+        await db.SaveChangesAsync();
+
+        var teacher = await db.Employees.FindAsync(teacherId);
+
+        return Ok(new
+        {
+            message = "تم ربط المعلم بالشعبة بنجاح",
+            data = new
+            {
+                teacherLocalNumber = request.TeacherLocalNumber,
+                teacherName = teacher?.Name,
+                localSubjectId = request.LocalSubjectId,
+                subjectName = subject.Name,
+                localGradeNumber = request.LocalGradeNumber,
+                gradeName = grade.Name,
+                localSectionNumber = section.LocalSectionNumber,
+                sectionName = section.Name,
+                sectionId = section.Id,
+                gradeId = grade.Id,
+                createdAt = DateTime.UtcNow
+            }
+        });
+    }
+
     // ============================================
-// ربط المعلم بالشعبة (باستخدام Local IDs)
-// ============================================
+    // فك ربط المعلم بالشعبة (باستخدام Local IDs)
+    // ============================================
 
-[HttpPost("assign-teacher-to-section")]
-public async Task<IActionResult> AssignTeacherToSection(TeacherGradeLocalRequest request)
-{
-    var teacherSchool = await db.EmployeeSchools
-        .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
-                                   es.LocalEmployeeNumber == request.TeacherLocalNumber &&
-                                   es.Role == EmployeeRole.Teacher &&
-                                   es.IsActive);
-
-    if (teacherSchool is null)
-        return BadRequest(new { message = $"لا يوجد معلم برقم {request.TeacherLocalNumber} في هذه المدرسة" });
-
-    var subject = await db.Subjects
-        .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
-                                  s.LocalSubjectId == request.LocalSubjectId);
-
-    if (subject is null)
-        return BadRequest(new { message = $"لا توجد مادة برقم {request.LocalSubjectId} في هذه المدرسة" });
-
-    // ✅ التحقق من وجود الصف
-    var grade = await db.Grades
-        .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
-                                  g.LocalGradeNumber == request.LocalGradeNumber);
-
-    if (grade is null)
-        return BadRequest(new { message = $"لا يوجد صف برقم {request.LocalGradeNumber} في هذه المدرسة" });
-
-    // ✅ التحقق من وجود الشعبة في الصف المحدد
-    var section = await db.Sections
-        .Include(s => s.Grade)
-        .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
-                                  s.LocalSectionNumber == request.LocalSectionNumber &&
-                                  s.GradeId == grade.Id);
-
-    if (section is null)
-        return BadRequest(new { 
-            message = $"لا توجد شعبة برقم {request.LocalSectionNumber} في الصف {request.LocalGradeNumber}" 
-        });
-
-    var teacherId = teacherSchool.EmployeeId;
-    var subjectId = subject.Id;
-
-    // ✅ التحقق من عدم وجود ربط مكرر
-    var exists = await db.TeacherGrades
-        .AnyAsync(tg => tg.TeacherId == teacherId &&
-                       tg.SubjectId == subjectId &&
-                       tg.SectionId == section.Id);
-
-    if (exists)
-        return BadRequest(new { message = "هذا المعلم مرتبط بالفعل بهذه المادة في هذه الشعبة" });
-
-    var teacherGrade = new TeacherGrade
+    [HttpDelete("unassign-teacher-from-section")]
+    public async Task<IActionResult> UnassignTeacherFromSection(
+        [FromQuery] int teacherLocalNumber,
+        [FromQuery] int localGradeNumber,
+        [FromQuery] int localSectionNumber,
+        [FromQuery] int localSubjectId)
     {
-        TeacherId = teacherId,
-        SubjectId = subjectId,
-        SectionId = section.Id
-    };
+        var teacherSchool = await db.EmployeeSchools
+            .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
+                                       es.LocalEmployeeNumber == teacherLocalNumber &&
+                                       es.Role == EmployeeRole.Teacher &&
+                                       es.IsActive);
 
-    db.TeacherGrades.Add(teacherGrade);
-    await db.SaveChangesAsync();
+        if (teacherSchool is null)
+            return BadRequest(new { 
+                success = false, 
+                message = $"لا يوجد معلم برقم {teacherLocalNumber} في هذه المدرسة" 
+            });
 
-    var teacher = await db.Employees.FindAsync(teacherId);
+        var teacherId = teacherSchool.EmployeeId;
 
-    return Ok(new
-    {
-        message = "تم ربط المعلم بالشعبة بنجاح",
-        data = new
-        {
-            teacherLocalNumber = request.TeacherLocalNumber,
-            teacherName = teacher?.Name,
-            localSubjectId = request.LocalSubjectId,
-            subjectName = subject.Name,
-            localGradeNumber = request.LocalGradeNumber,
-            gradeName = grade.Name,
-            localSectionNumber = section.LocalSectionNumber,
-            sectionName = section.Name,
-            sectionId = section.Id,
-            gradeId = grade.Id,
-            createdAt = DateTime.UtcNow
-        }
-    });
-}
+        var grade = await db.Grades
+            .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                      g.LocalGradeNumber == localGradeNumber);
 
-// ============================================
-// فك ربط المعلم بالشعبة (باستخدام Local IDs)
-// ============================================
+        if (grade is null)
+            return BadRequest(new { 
+                success = false, 
+                message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" 
+            });
 
-[HttpDelete("unassign-teacher-from-section")]
-public async Task<IActionResult> UnassignTeacherFromSection(
-    [FromQuery] int teacherLocalNumber,
-    [FromQuery] int localGradeNumber,
-    [FromQuery] int localSectionNumber,
-    [FromQuery] int localSubjectId)
-{
-    // 1. التحقق من وجود المعلم
-    var teacherSchool = await db.EmployeeSchools
-        .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
-                                   es.LocalEmployeeNumber == teacherLocalNumber &&
-                                   es.Role == EmployeeRole.Teacher &&
-                                   es.IsActive);
+        var section = await db.Sections
+            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
+                                      s.LocalSectionNumber == localSectionNumber &&
+                                      s.GradeId == grade.Id);
 
-    if (teacherSchool is null)
-        return BadRequest(new { 
-            success = false, 
-            message = $"لا يوجد معلم برقم {teacherLocalNumber} في هذه المدرسة" 
-        });
+        if (section is null)
+            return BadRequest(new { 
+                success = false, 
+                message = $"لا توجد شعبة برقم {localSectionNumber} في الصف {localGradeNumber}" 
+            });
 
-    var teacherId = teacherSchool.EmployeeId;
+        var subject = await db.Subjects
+            .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
+                                      s.LocalSubjectId == localSubjectId);
 
-    // 2. التحقق من وجود الصف
-    var grade = await db.Grades
-        .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
-                                  g.LocalGradeNumber == localGradeNumber);
+        if (subject is null)
+            return BadRequest(new { 
+                success = false, 
+                message = $"لا توجد مادة برقم {localSubjectId} في هذه المدرسة" 
+            });
 
-    if (grade is null)
-        return BadRequest(new { 
-            success = false, 
-            message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" 
-        });
+        var teacherGrade = await db.TeacherGrades
+            .FirstOrDefaultAsync(tg => tg.TeacherId == teacherId &&
+                                       tg.SubjectId == subject.Id &&
+                                       tg.SectionId == section.Id);
 
-    // 3. التحقق من وجود الشعبة في الصف المحدد
-    var section = await db.Sections
-        .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
-                                  s.LocalSectionNumber == localSectionNumber &&
-                                  s.GradeId == grade.Id);
+        if (teacherGrade is null)
+            return NotFound(new { 
+                success = false, 
+                message = "هذا المعلم غير مرتبط بهذه المادة في هذه الشعبة" 
+            });
 
-    if (section is null)
-        return BadRequest(new { 
-            success = false, 
-            message = $"لا توجد شعبة برقم {localSectionNumber} في الصف {localGradeNumber}" 
-        });
+        db.TeacherGrades.Remove(teacherGrade);
+        await db.SaveChangesAsync();
 
-    // 4. التحقق من وجود المادة
-    var subject = await db.Subjects
-        .FirstOrDefaultAsync(s => s.SchoolId == SchoolId &&
-                                  s.LocalSubjectId == localSubjectId);
+        var teacher = await db.Employees.FindAsync(teacherId);
 
-    if (subject is null)
-        return BadRequest(new { 
-            success = false, 
-            message = $"لا توجد مادة برقم {localSubjectId} في هذه المدرسة" 
-        });
-
-    // 5. البحث عن الربط
-    var teacherGrade = await db.TeacherGrades
-        .FirstOrDefaultAsync(tg => tg.TeacherId == teacherId &&
-                                   tg.SubjectId == subject.Id &&
-                                   tg.SectionId == section.Id);
-
-    if (teacherGrade is null)
-        return NotFound(new { 
-            success = false, 
-            message = "هذا المعلم غير مرتبط بهذه المادة في هذه الشعبة" 
-        });
-
-    // 6. حذف الربط
-    db.TeacherGrades.Remove(teacherGrade);
-    await db.SaveChangesAsync();
-
-    var teacher = await db.Employees.FindAsync(teacherId);
-
-    return Ok(new
-    {
-        success = true,
-        message = "تم فك ربط المعلم بالشعبة بنجاح",
-        data = new
-        {
-            teacherLocalNumber = teacherLocalNumber,
-            teacherName = teacher?.Name,
-            localGradeNumber = localGradeNumber,
-            gradeName = grade.Name,
-            localSectionNumber = localSectionNumber,
-            sectionName = section.Name,
-            localSubjectId = localSubjectId,
-            subjectName = subject.Name,
-            deletedAt = DateTime.UtcNow
-        }
-    });
-}
-
-// ============================================
-// جلب جميع روابط المعلم في صف معين (باستخدام Local IDs)
-// ============================================
-
-[HttpGet("teacher-sections/{localTeacherNumber:int}/grade/{localGradeNumber:int}")]
-public async Task<IActionResult> GetTeacherSectionsByGrade(
-    int localTeacherNumber,
-    int localGradeNumber)
-{
-    var teacherSchool = await db.EmployeeSchools
-        .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
-                                   es.LocalEmployeeNumber == localTeacherNumber &&
-                                   es.Role == EmployeeRole.Teacher &&
-                                   es.IsActive);
-
-    if (teacherSchool is null)
-        return NotFound(new { 
-            success = false, 
-            message = $"لا يوجد معلم برقم {localTeacherNumber} في هذه المدرسة" 
-        });
-
-    var teacherId = teacherSchool.EmployeeId;
-    var teacher = await db.Employees.FindAsync(teacherId);
-
-    var grade = await db.Grades
-        .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
-                                  g.LocalGradeNumber == localGradeNumber);
-
-    if (grade is null)
-        return NotFound(new { 
-            success = false, 
-            message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" 
-        });
-
-    // جلب جميع شعب هذا الصف
-    var sectionIds = await db.Sections
-        .Where(s => s.GradeId == grade.Id)
-        .Select(s => s.Id)
-        .ToListAsync();
-
-    if (!sectionIds.Any())
         return Ok(new
         {
             success = true,
-            message = $"لا توجد شعب في الصف {grade.Name}",
+            message = "تم فك ربط المعلم بالشعبة بنجاح",
+            data = new
+            {
+                teacherLocalNumber = teacherLocalNumber,
+                teacherName = teacher?.Name,
+                localGradeNumber = localGradeNumber,
+                gradeName = grade.Name,
+                localSectionNumber = localSectionNumber,
+                sectionName = section.Name,
+                localSubjectId = localSubjectId,
+                subjectName = subject.Name,
+                deletedAt = DateTime.UtcNow
+            }
+        });
+    }
+
+    // ============================================
+    // جلب جميع روابط المعلم في صف معين (باستخدام Local IDs)
+    // ============================================
+
+    [HttpGet("teacher-sections/{localTeacherNumber:int}/grade/{localGradeNumber:int}")]
+    public async Task<IActionResult> GetTeacherSectionsByGrade(
+        int localTeacherNumber,
+        int localGradeNumber)
+    {
+        var teacherSchool = await db.EmployeeSchools
+            .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
+                                       es.LocalEmployeeNumber == localTeacherNumber &&
+                                       es.Role == EmployeeRole.Teacher &&
+                                       es.IsActive);
+
+        if (teacherSchool is null)
+            return NotFound(new { 
+                success = false, 
+                message = $"لا يوجد معلم برقم {localTeacherNumber} في هذه المدرسة" 
+            });
+
+        var teacherId = teacherSchool.EmployeeId;
+        var teacher = await db.Employees.FindAsync(teacherId);
+
+        var grade = await db.Grades
+            .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                      g.LocalGradeNumber == localGradeNumber);
+
+        if (grade is null)
+            return NotFound(new { 
+                success = false, 
+                message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" 
+            });
+
+        var sectionIds = await db.Sections
+            .Where(s => s.GradeId == grade.Id && s.SchoolId == SchoolId)
+            .Select(s => s.Id)
+            .ToListAsync();
+
+        if (!sectionIds.Any())
+            return Ok(new
+            {
+                success = true,
+                message = $"لا توجد شعب في الصف {grade.Name}",
+                data = new
+                {
+                    teacherLocalNumber = localTeacherNumber,
+                    teacherName = teacher?.Name,
+                    localGradeNumber = localGradeNumber,
+                    gradeName = grade.Name,
+                    totalSections = 0,
+                    sections = new List<object>()
+                }
+            });
+
+        var teacherSections = await db.TeacherGrades
+            .Where(tg => tg.TeacherId == teacherId &&
+                         sectionIds.Contains(tg.SectionId))
+            .Include(tg => tg.Section)
+                .ThenInclude(s => s!.Grade)
+            .Include(tg => tg.Subject)
+            .Select(tg => new
+            {
+                tg.Id,
+                sectionId = tg.SectionId,
+                localSectionNumber = tg.Section != null ? tg.Section.LocalSectionNumber : 0,
+                sectionName = tg.Section != null ? tg.Section.Name : null,
+                subjectId = tg.SubjectId,
+                localSubjectId = tg.Subject != null ? tg.Subject.LocalSubjectId : 0,
+                subjectName = tg.Subject != null ? tg.Subject.Name : null,
+                tg.CreatedAt
+            })
+            .ToListAsync();
+
+        return Ok(new
+        {
+            success = true,
+            message = $"تم جلب شعب المعلم في الصف {grade.Name} بنجاح",
             data = new
             {
                 teacherLocalNumber = localTeacherNumber,
                 teacherName = teacher?.Name,
                 localGradeNumber = localGradeNumber,
                 gradeName = grade.Name,
-                totalSections = 0,
-                sections = new List<object>()
+                totalSections = teacherSections.Count,
+                sections = teacherSections
             }
         });
+    }
 
-    var teacherSections = await db.TeacherGrades
-        .Where(tg => tg.TeacherId == teacherId &&
-                     sectionIds.Contains(tg.SectionId))
-        .Include(tg => tg.Section)
-            .ThenInclude(s => s!.Grade)
-        .Include(tg => tg.Subject)
-        .Select(tg => new
-        {
-            tg.Id,
-            sectionId = tg.SectionId,
-            localSectionNumber = tg.Section != null ? tg.Section.LocalSectionNumber : 0,
-            sectionName = tg.Section != null ? tg.Section.Name : null,
-            subjectId = tg.SubjectId,
-            localSubjectId = tg.Subject != null ? tg.Subject.LocalSubjectId : 0,
-            subjectName = tg.Subject != null ? tg.Subject.Name : null,
-            tg.CreatedAt
-        })
-        .ToListAsync();
+    // ============================================
+    // جلب جميع شعب الصف مع معلميها (باستخدام Local IDs)
+    // ============================================
 
-    return Ok(new
+    [HttpGet("grade-sections-with-teachers/{localGradeNumber:int}")]
+    public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumber)
     {
-        success = true,
-        message = $"تم جلب شعب المعلم في الصف {grade.Name} بنجاح",
-        data = new
+        var grade = await db.Grades
+            .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                      g.LocalGradeNumber == localGradeNumber);
+
+        if (grade is null)
+            return NotFound(new { 
+                success = false, 
+                message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" 
+            });
+
+        var sections = await db.Sections
+            .Where(s => s.GradeId == grade.Id && s.SchoolId == SchoolId)
+            .OrderBy(s => s.LocalSectionNumber)
+            .Select(s => new
+            {
+                s.Id,
+                s.Name,
+                s.LocalSectionNumber,
+                Teachers = db.TeacherGrades
+                    .Where(tg => tg.SectionId == s.Id &&
+                                 tg.Teacher != null &&
+                                 db.EmployeeSchools.Any(es => es.EmployeeId == tg.TeacherId && 
+                                                             es.SchoolId == SchoolId && 
+                                                             es.IsActive))
+                    .Select(tg => new
+                    {
+                        tg.TeacherId,
+                        TeacherName = tg.Teacher != null ? tg.Teacher.Name : null,
+                        LocalTeacherNumber = db.EmployeeSchools
+                            .Where(es => es.EmployeeId == tg.TeacherId && 
+                                         es.SchoolId == SchoolId && 
+                                         es.IsActive)
+                            .Select(es => (int?)es.LocalEmployeeNumber)
+                            .FirstOrDefault(),
+                        tg.SubjectId,
+                        LocalSubjectId = tg.Subject != null ? tg.Subject.LocalSubjectId : 0,
+                        SubjectName = tg.Subject != null ? tg.Subject.Name : null,
+                        tg.CreatedAt
+                    })
+                    .ToList()
+            })
+            .ToListAsync();
+
+        return Ok(new
         {
-            teacherLocalNumber = localTeacherNumber,
-            teacherName = teacher?.Name,
-            localGradeNumber = localGradeNumber,
-            gradeName = grade.Name,
-            totalSections = teacherSections.Count,
-            sections = teacherSections
-        }
-    });
-}
-
-// ============================================
-// جلب جميع شعب الصف مع معلميها (باستخدام Local IDs)
-// ============================================
-
-[HttpGet("grade-sections-with-teachers/{localGradeNumber:int}")]
-public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumber)
-{
-    var grade = await db.Grades
-        .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
-                                  g.LocalGradeNumber == localGradeNumber);
-
-    if (grade is null)
-        return NotFound(new { 
-            success = false, 
-            message = $"لا يوجد صف برقم {localGradeNumber} في هذه المدرسة" 
+            success = true,
+            message = $"تم جلب شعب الصف {grade.Name} مع معلميها بنجاح",
+            data = new
+            {
+                localGradeNumber = grade.LocalGradeNumber,
+                gradeName = grade.Name,
+                totalSections = sections.Count,
+                sections = sections
+            }
         });
+    }
 
-    var sections = await db.Sections
-        .Where(s => s.GradeId == grade.Id)
-        .OrderBy(s => s.LocalSectionNumber)
-        .Select(s => new
-        {
-            s.Id,
-            s.Name,
-            s.LocalSectionNumber,
-            Teachers = db.TeacherGrades
-                .Where(tg => tg.SectionId == s.Id)
-                .Select(tg => new
-                {
-                    tg.TeacherId,
-                    TeacherName = tg.Teacher != null ? tg.Teacher.Name : null,
-                    LocalTeacherNumber = db.EmployeeSchools
-                        .Where(es => es.EmployeeId == tg.TeacherId && 
-                                     es.SchoolId == SchoolId && 
-                                     es.IsActive)
-                        .Select(es => (int?)es.LocalEmployeeNumber)
-                        .FirstOrDefault(),
-                    tg.SubjectId,
-                    LocalSubjectId = tg.Subject != null ? tg.Subject.LocalSubjectId : 0,
-                    SubjectName = tg.Subject != null ? tg.Subject.Name : null,
-                    tg.CreatedAt
-                })
-                .ToList()
-        })
-        .ToListAsync();
-
-    return Ok(new
-    {
-        success = true,
-        message = $"تم جلب شعب الصف {grade.Name} مع معلميها بنجاح",
-        data = new
-        {
-            localGradeNumber = grade.LocalGradeNumber,
-            gradeName = grade.Name,
-            totalSections = sections.Count,
-            sections = sections
-        }
-    });
-}
-
-
+    // ============================================
     // إدارة الموظفين - إنشاء، تحديث، حذف (باستخدام Local IDs)
     // ============================================
 
     [HttpPost("employees")]
     public async Task<IActionResult> CreateEmployee(EmployeeCreateLocalRequest request)
     {
-        // 1. التحقق من وجود المدرسة
         var school = await db.Schools.FindAsync(SchoolId);
         if (school is null)
             return BadRequest(new { success = false, message = "المدرسة غير موجودة" });
 
-        // 2. التحقق من عدم وجود موظف بنفس البريد الإلكتروني
-        if (await db.Employees.AnyAsync(e => e.Email == request.Email))
-            return BadRequest(new { success = false, message = "البريد الإلكتروني مستخدم بالفعل" });
+        Employee? existingEmployee = null;
+        if (!string.IsNullOrEmpty(request.NationalId))
+        {
+            existingEmployee = await db.Employees
+                .FirstOrDefaultAsync(e => e.NationalId == request.NationalId);
+        }
 
-        // 3. التحقق من عدم وجود موظف بنفس الرقم الوطني
-        if (!string.IsNullOrEmpty(request.NationalId) && 
-            await db.Employees.AnyAsync(e => e.NationalId == request.NationalId))
-            return BadRequest(new { success = false, message = "الرقم الوطني مستخدم بالفعل" });
+        Employee employee;
+        bool isNewEmployee = false;
 
-        // 4. التحقق من الأدوار الفريدة
+        if (existingEmployee is not null)
+        {
+            employee = existingEmployee;
+
+            if (!string.IsNullOrWhiteSpace(request.Email) && request.Email != employee.Email)
+            {
+                var existingEmail = await db.Employees
+                    .FirstOrDefaultAsync(e => e.Email == request.Email && e.Id != employee.Id);
+
+                if (existingEmail is not null)
+                {
+                    return BadRequest(new { 
+                        success = false, 
+                        message = "البريد الإلكتروني مستخدم بالفعل من قبل موظف آخر برقم وطني مختلف" 
+                    });
+                }
+
+                employee.Email = request.Email;
+            }
+
+            employee.Name = request.Name;
+            employee.Phone = request.Phone ?? employee.Phone;
+            employee.Address = request.Address ?? employee.Address;
+            employee.BirthDate = request.BirthDate;
+            employee.Qualification = request.Qualification ?? employee.Qualification;
+            
+            if (!string.IsNullOrWhiteSpace(request.Password))
+                employee.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
+        }
+        else
+        {
+            if (!string.IsNullOrWhiteSpace(request.Email))
+            {
+                var existingEmail = await db.Employees
+                    .FirstOrDefaultAsync(e => e.Email == request.Email);
+
+                if (existingEmail is not null)
+                {
+                    return BadRequest(new { 
+                        success = false, 
+                        message = "البريد الإلكتروني مستخدم بالفعل من قبل موظف آخر" 
+                    });
+                }
+            }
+            else
+            {
+                return BadRequest(new { success = false, message = "البريد الإلكتروني مطلوب" });
+            }
+
+            employee = new Employee
+            {
+                Name = request.Name,
+                Email = request.Email,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+                NationalId = request.NationalId ?? "",
+                Phone = request.Phone ?? "",
+                Address = request.Address ?? "",
+                BirthDate = request.BirthDate,
+                Qualification = request.Qualification ?? "",
+                CreatedAt = DateTime.UtcNow
+            };
+
+            db.Employees.Add(employee);
+            isNewEmployee = true;
+            await db.SaveChangesAsync();
+        }
+
         if (IsUniqueRole(request.Role))
         {
             var existingRole = await db.EmployeeSchools
@@ -1764,24 +1690,14 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
                 return BadRequest(new { success = false, message = $"الوظيفة '{GetRoleName(request.Role)}' مشغولة بالفعل في هذه المدرسة" });
         }
 
-        // 5. إنشاء الموظف
-        var employee = new Employee
-        {
-            Name = request.Name,
-            Email = request.Email,
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
-            NationalId = request.NationalId ?? "",
-            Phone = request.Phone ?? "",
-            Address = request.Address ?? "",
-            BirthDate = request.BirthDate,
-            Qualification = request.Qualification ?? "",
-            CreatedAt = DateTime.UtcNow
-        };
+        var existingInSameSchool = await db.EmployeeSchools
+            .AnyAsync(es => es.EmployeeId == employee.Id &&
+                           es.SchoolId == SchoolId &&
+                           es.IsActive);
 
-        db.Employees.Add(employee);
-        await db.SaveChangesAsync();
+        if (existingInSameSchool)
+            return BadRequest(new { success = false, message = "هذا الموظف موجود بالفعل في هذه المدرسة" });
 
-        // 6. حساب LocalEmployeeNumber
         var maxLocalNumber = await db.EmployeeSchools
             .Where(es => es.SchoolId == SchoolId)
             .Select(es => (int?)es.LocalEmployeeNumber)
@@ -1789,7 +1705,6 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
 
         int newLocalNumber = maxLocalNumber + 1;
 
-        // 7. ربط الموظف بالمدرسة
         var employeeSchool = new EmployeeSchool
         {
             EmployeeId = employee.Id,
@@ -1802,7 +1717,6 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
 
         db.EmployeeSchools.Add(employeeSchool);
 
-        // 8. إذا كان معلم، أضف TeacherAssignment
         if (request.Role == EmployeeRole.Teacher)
         {
             db.TeacherAssignments.Add(new TeacherAssignment
@@ -1814,7 +1728,6 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
 
         await db.SaveChangesAsync();
 
-        // 9. إشعار للموظف الجديد
         await notifier.SendAsync(employee.Id, UserType.Employee,
             "مرحباً في المدرسة",
             $"تم تسجيلك في مدرسة '{school.Name}' برقم موظف {newLocalNumber}",
@@ -1823,7 +1736,7 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
         return Created($"api/manager/employees/{newLocalNumber}", new
         {
             success = true,
-            message = "تم إنشاء الموظف وربطه بالمدرسة بنجاح",
+            message = isNewEmployee ? "تم إنشاء الموظف وربطه بالمدرسة بنجاح" : "تم تحديث بيانات الموظف وربطه بالمدرسة بنجاح",
             data = new
             {
                 employee.Id,
@@ -1847,7 +1760,6 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
     [HttpPut("employees/{localEmployeeNumber:int}")]
     public async Task<IActionResult> UpdateEmployee(int localEmployeeNumber, EmployeeUpdateLocalRequest request)
     {
-        // 1. البحث عن الموظف في المدرسة
         var employeeSchool = await db.EmployeeSchools
             .Include(es => es.Employee)
             .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
@@ -1861,28 +1773,37 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
         if (employee is null)
             return NotFound(new { success = false, message = "الموظف غير موجود" });
 
-        // 2. تحديث البيانات الأساسية
         if (!string.IsNullOrWhiteSpace(request.Name))
             employee.Name = request.Name;
 
-        if (!string.IsNullOrWhiteSpace(request.Email))
+        if (!string.IsNullOrWhiteSpace(request.Email) && request.Email != employee.Email)
         {
             var existingEmail = await db.Employees
-                .AnyAsync(e => e.Email == request.Email && e.Id != employee.Id);
-            
-            if (existingEmail)
-                return BadRequest(new { success = false, message = "البريد الإلكتروني مستخدم بالفعل" });
+                .FirstOrDefaultAsync(e => e.Email == request.Email && e.Id != employee.Id);
+
+            if (existingEmail is not null)
+            {
+                return BadRequest(new { 
+                    success = false, 
+                    message = "البريد الإلكتروني مستخدم بالفعل من قبل موظف آخر" 
+                });
+            }
 
             employee.Email = request.Email;
         }
 
-        if (!string.IsNullOrWhiteSpace(request.NationalId))
+        if (!string.IsNullOrWhiteSpace(request.NationalId) && request.NationalId != employee.NationalId)
         {
             var existingNationalId = await db.Employees
-                .AnyAsync(e => e.NationalId == request.NationalId && e.Id != employee.Id);
-            
-            if (existingNationalId)
-                return BadRequest(new { success = false, message = "الرقم الوطني مستخدم بالفعل" });
+                .FirstOrDefaultAsync(e => e.NationalId == request.NationalId && e.Id != employee.Id);
+
+            if (existingNationalId is not null)
+            {
+                return BadRequest(new { 
+                    success = false, 
+                    message = "الرقم الوطني مستخدم بالفعل من قبل موظف آخر" 
+                });
+            }
 
             employee.NationalId = request.NationalId;
         }
@@ -1895,7 +1816,6 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
 
         if (request.BirthDate.HasValue)
         {
-            // التحقق من العمر
             var age = CalculateAge(request.BirthDate.Value);
             if (age < 18)
                 return BadRequest(new { success = false, message = "عمر الموظف يجب أن يكون 18 سنة على الأقل" });
@@ -1909,10 +1829,8 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
         if (!string.IsNullOrWhiteSpace(request.Password))
             employee.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
 
-        // 3. تحديث الدور إذا تم إرساله
         if (request.Role.HasValue && request.Role.Value != employeeSchool.Role)
         {
-            // التحقق من الأدوار الفريدة
             if (IsUniqueRole(request.Role.Value))
             {
                 var existingRole = await db.EmployeeSchools
@@ -1925,7 +1843,6 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
                     return BadRequest(new { success = false, message = $"الدور '{GetRoleName(request.Role.Value)}' مشغول بالفعل في هذه المدرسة" });
             }
 
-            // إذا كان الدور الجديد معلم، أضف TeacherAssignment
             if (request.Role.Value == EmployeeRole.Teacher)
             {
                 var existingAssignment = await db.TeacherAssignments
@@ -1942,7 +1859,6 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
             }
             else
             {
-                // إذا لم يعد معلم، احذف TeacherAssignment
                 var assignments = await db.TeacherAssignments
                     .Where(t => t.EmployeeId == employee.Id && t.SchoolId == SchoolId)
                     .ToListAsync();
@@ -1981,7 +1897,6 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
     [HttpDelete("employees/{localEmployeeNumber:int}")]
     public async Task<IActionResult> DeleteEmployee(int localEmployeeNumber)
     {
-        // 1. البحث عن الموظف في المدرسة
         var employeeSchool = await db.EmployeeSchools
             .Include(es => es.Employee)
             .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
@@ -1995,11 +1910,9 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
         if (employee is null)
             return NotFound(new { success = false, message = "الموظف غير موجود" });
 
-        // 2. التحقق من أن الموظف ليس مدير المدرسة
         if (employeeSchool.Role == EmployeeRole.Principal)
             return BadRequest(new { success = false, message = "لا يمكن حذف مدير المدرسة" });
 
-        // 3. التحقق من أن الموظف ليس له علاقات نشطة في مدارس أخرى
         var activeInOtherSchools = await db.EmployeeSchools
             .AnyAsync(es => es.EmployeeId == employee.Id &&
                            es.SchoolId != SchoolId &&
@@ -2007,10 +1920,8 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
 
         if (activeInOtherSchools)
         {
-            // إذا كان يعمل في مدارس أخرى، فقط قم بإلغاء الربط مع هذه المدرسة
             employeeSchool.IsActive = false;
 
-            // حذف TeacherAssignment لهذه المدرسة فقط
             var assignments = await db.TeacherAssignments
                 .Where(t => t.EmployeeId == employee.Id && t.SchoolId == SchoolId)
                 .ToListAsync();
@@ -2035,50 +1946,42 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
             });
         }
 
-        // 4. حذف جميع البيانات المرتبطة
-        // حضور الموظف
         var attendances = await db.EmployeeAttendances
             .Where(a => a.EmployeeId == employee.Id)
             .ToListAsync();
         if (attendances.Any())
             db.EmployeeAttendances.RemoveRange(attendances);
 
-        // الإجازات
         var leaves = await db.Leaves
             .Where(l => l.EmployeeId == employee.Id)
             .ToListAsync();
         if (leaves.Any())
             db.Leaves.RemoveRange(leaves);
 
-        // TeacherAssignments
         var teacherAssignments = await db.TeacherAssignments
             .Where(t => t.EmployeeId == employee.Id)
             .ToListAsync();
         if (teacherAssignments.Any())
             db.TeacherAssignments.RemoveRange(teacherAssignments);
 
-        // TeacherSubjects
         var teacherSubjects = await db.TeacherSubjects
             .Where(t => t.TeacherId == employee.Id)
             .ToListAsync();
         if (teacherSubjects.Any())
             db.TeacherSubjects.RemoveRange(teacherSubjects);
 
-        // TeacherGrades
         var teacherGrades = await db.TeacherGrades
             .Where(t => t.TeacherId == employee.Id)
             .ToListAsync();
         if (teacherGrades.Any())
             db.TeacherGrades.RemoveRange(teacherGrades);
 
-        // 5. حذف جميع EmployeeSchools
         var allEmployeeSchools = await db.EmployeeSchools
             .Where(es => es.EmployeeId == employee.Id)
             .ToListAsync();
         if (allEmployeeSchools.Any())
             db.EmployeeSchools.RemoveRange(allEmployeeSchools);
 
-        // 6. حذف الموظف
         db.Employees.Remove(employee);
         await db.SaveChangesAsync();
 
@@ -2100,7 +2003,6 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
     [HttpPut("employees/{localEmployeeNumber:int}/role")]
     public async Task<IActionResult> UpdateEmployeeRole(int localEmployeeNumber, [FromBody] EmployeeRole newRole)
     {
-        // 1. البحث عن الموظف
         var employeeSchool = await db.EmployeeSchools
             .Include(es => es.Employee)
             .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
@@ -2110,7 +2012,6 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
         if (employeeSchool is null)
             return NotFound(new { success = false, message = $"لا يوجد موظف برقم {localEmployeeNumber} في هذه المدرسة" });
 
-        // 2. التحقق من الأدوار الفريدة
         if (IsUniqueRole(newRole))
         {
             var existingRole = await db.EmployeeSchools
@@ -2123,7 +2024,6 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
                 return BadRequest(new { success = false, message = $"الدور '{GetRoleName(newRole)}' مشغول بالفعل في هذه المدرسة" });
         }
 
-        // 3. تحديث TeacherAssignment إذا لزم الأمر
         if (newRole == EmployeeRole.Teacher)
         {
             var existingAssignment = await db.TeacherAssignments
@@ -2148,7 +2048,6 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
                 db.TeacherAssignments.RemoveRange(assignments);
         }
 
-        // 4. تحديث الدور
         employeeSchool.Role = newRole;
         await db.SaveChangesAsync();
 
@@ -2171,7 +2070,6 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
     [HttpPost("employees/{localEmployeeNumber:int}/dismiss")]
     public async Task<IActionResult> DismissEmployee(int localEmployeeNumber)
     {
-        // 1. البحث عن الموظف
         var employeeSchool = await db.EmployeeSchools
             .Include(es => es.Employee)
             .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
@@ -2185,15 +2083,12 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
         if (employee is null)
             return NotFound(new { success = false, message = "الموظف غير موجود" });
 
-        // 2. التحقق من أنه ليس مدير المدرسة
         if (employeeSchool.Role == EmployeeRole.Principal)
             return BadRequest(new { success = false, message = "لا يمكن فصل مدير المدرسة" });
 
-        // 3. تنفيذ الفصل
         employeeSchool.IsActive = false;
         employee.IsDismissed = true;
 
-        // 4. حذف TeacherAssignment
         var assignments = await db.TeacherAssignments
             .Where(t => t.EmployeeId == employee.Id && t.SchoolId == SchoolId)
             .ToListAsync();
@@ -2203,7 +2098,6 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
 
         await db.SaveChangesAsync();
 
-        // 5. إشعار بالفصل
         await notifier.SendAsync(employee.Id, UserType.Employee, 
             "قرار فصل", 
             "تم فصلك من العمل", 
@@ -2223,70 +2117,15 @@ public async Task<IActionResult> GetGradeSectionsWithTeachers(int localGradeNumb
         });
     }
 
-        [HttpGet("teachers")]
-public async Task<IActionResult> GetTeachers()
-{
-    var teachers = await db.EmployeeSchools
-        .Where(es => es.SchoolId == SchoolId && es.IsActive && es.Role == EmployeeRole.Teacher)
-        .Include(es => es.Employee)
-        .OrderBy(es => es.LocalEmployeeNumber)
-        .Select(es => new
-        {
-            es.LocalEmployeeNumber,
-            es.EmployeeId,
-            es.Employee!.Name,
-            es.Employee.Email,
-            es.Employee.NationalId,
-            es.Employee.Phone,
-            es.Employee.Address,
-            es.Employee.BirthDate,
-            es.Role,
-            RoleName = GetRoleName(es.Role),
-            es.IsActive,
-            es.CreatedAt,
-            
-            // ✅ Get subjects assigned to this teacher from TeacherGrades
-            Subjects = db.TeacherGrades
-                .Where(tg => tg.TeacherId == es.EmployeeId)
-                .Select(tg => new
-                {
-                    tg.SubjectId,
-                    SubjectName = tg.Subject != null ? tg.Subject.Name : null,
-                    LocalSubjectId = tg.Subject != null ? tg.Subject.LocalSubjectId : 0,
-                    SectionId = tg.SectionId,
-                    SectionName = tg.Section != null ? tg.Section.Name : null,
-                    LocalSectionNumber = tg.Section != null ? tg.Section.LocalSectionNumber : 0,
-                    GradeName = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.Name : null,
-                    LocalGradeNumber = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.LocalGradeNumber : 0
-                })
-                .ToList(),
-            
-            // ✅ Get sections assigned to this teacher (grouped by subject)
-            Sections = db.TeacherGrades
-                .Where(tg => tg.TeacherId == es.EmployeeId)
-                .Select(tg => new
-                {
-                    tg.SectionId,
-                    SectionName = tg.Section != null ? tg.Section.Name : null,
-                    tg.Section!.LocalSectionNumber,
-                    GradeName = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.Name : null,
-                    LocalGradeNumber = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.LocalGradeNumber : 0,
-                    SubjectId = tg.SubjectId,
-                    SubjectName = tg.Subject != null ? tg.Subject.Name : null,
-                    LocalSubjectId = tg.Subject != null ? tg.Subject.LocalSubjectId : 0
-                })
-                .ToList()
-        })
-        .ToListAsync();
+    // ============================================
+    // جلب المعلمين
+    // ============================================
 
-    return Ok(teachers);
-}
-
-    [HttpGet("employees")]
-    public async Task<IActionResult> GetEmployees()
+    [HttpGet("teachers")]
+    public async Task<IActionResult> GetTeachers()
     {
-        var employees = await db.EmployeeSchools
-            .Where(es => es.SchoolId == SchoolId && es.IsActive)
+        var teachers = await db.EmployeeSchools
+            .Where(es => es.SchoolId == SchoolId && es.IsActive && es.Role == EmployeeRole.Teacher)
             .Include(es => es.Employee)
             .OrderBy(es => es.LocalEmployeeNumber)
             .Select(es => new
@@ -2297,47 +2136,48 @@ public async Task<IActionResult> GetTeachers()
                 es.Employee.Email,
                 es.Employee.NationalId,
                 es.Employee.Phone,
+                es.Employee.Address,
+                es.Employee.BirthDate,
                 es.Role,
                 RoleName = GetRoleName(es.Role),
                 es.IsActive,
-                es.CreatedAt
+                es.CreatedAt,
+                Subjects = db.TeacherGrades
+                    .Where(tg => tg.TeacherId == es.EmployeeId &&
+                                 tg.Section != null &&
+                                 tg.Section.SchoolId == SchoolId)
+                    .Select(tg => new
+                    {
+                        tg.SubjectId,
+                        SubjectName = tg.Subject != null ? tg.Subject.Name : null,
+                        LocalSubjectId = tg.Subject != null ? tg.Subject.LocalSubjectId : 0,
+                        SectionId = tg.SectionId,
+                        SectionName = tg.Section != null ? tg.Section.Name : null,
+                        LocalSectionNumber = tg.Section != null ? tg.Section.LocalSectionNumber : 0,
+                        GradeName = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.Name : null,
+                        LocalGradeNumber = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.LocalGradeNumber : 0
+                    })
+                    .ToList(),
+                Sections = db.TeacherGrades
+                    .Where(tg => tg.TeacherId == es.EmployeeId &&
+                                 tg.Section != null &&
+                                 tg.Section.SchoolId == SchoolId)
+                    .Select(tg => new
+                    {
+                        tg.SectionId,
+                        SectionName = tg.Section != null ? tg.Section.Name : null,
+                        tg.Section!.LocalSectionNumber,
+                        GradeName = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.Name : null,
+                        LocalGradeNumber = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.LocalGradeNumber : 0,
+                        SubjectId = tg.SubjectId,
+                        SubjectName = tg.Subject != null ? tg.Subject.Name : null,
+                        LocalSubjectId = tg.Subject != null ? tg.Subject.LocalSubjectId : 0
+                    })
+                    .ToList()
             })
             .ToListAsync();
 
-        return Ok(employees);
-    }
-
-    [HttpGet("employees/{localEmployeeNumber:int}")]
-    public async Task<IActionResult> GetEmployee(int localEmployeeNumber)
-    {
-        var employeeSchool = await db.EmployeeSchools
-            .Include(es => es.Employee)
-            .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
-                                      es.LocalEmployeeNumber == localEmployeeNumber &&
-                                      es.IsActive);
-
-        if (employeeSchool is null)
-            return NotFound(new { message = $"لا يوجد موظف برقم {localEmployeeNumber} في هذه المدرسة" });
-
-        var employee = employeeSchool.Employee;
-        if (employee is null)
-            return NotFound(new { message = "الموظف غير موجود" });
-
-        return Ok(new
-        {
-            employee.Id,
-            employee.Name,
-            employee.Email,
-            employee.NationalId,
-            employee.Phone,
-            employee.Address,
-            employee.BirthDate,
-            employee.Qualification,
-            employee.CreatedAt,
-            localEmployeeNumber = employeeSchool.LocalEmployeeNumber,
-            role = employeeSchool.Role,
-            roleName = GetRoleName(employeeSchool.Role)
-        });
+        return Ok(teachers);
     }
 
     // ============================================
@@ -2365,17 +2205,14 @@ public async Task<IActionResult> GetTeachers()
                 es.Employee.BirthDate,
                 es.Employee.Qualification,
                 es.Employee.CreatedAt,
-                // عدد الطلاب الذين يشرف عليهم الموجه
                 StudentsCount = db.Students
                     .Count(s => s.SchoolId == SchoolId &&
                                s.Section != null &&
                                s.Section.CounselorId == es.EmployeeId &&
                                s.IsActive),
-                // عدد الشعب التي يشرف عليها الموجه
                 SectionsCount = db.Sections
                     .Count(s => s.SchoolId == SchoolId &&
                                s.CounselorId == es.EmployeeId),
-                // قائمة الشعب التي يشرف عليها
                 Sections = db.Sections
                     .Where(s => s.SchoolId == SchoolId &&
                                s.CounselorId == es.EmployeeId)
@@ -2426,7 +2263,6 @@ public async Task<IActionResult> GetTeachers()
                 message = "الموجه غير موجود" 
             });
 
-        // جلب الشعب التي يشرف عليها الموجه
         var sections = await db.Sections
             .Include(s => s.Grade)
             .Where(s => s.SchoolId == SchoolId &&
@@ -2439,11 +2275,10 @@ public async Task<IActionResult> GetTeachers()
                 s.CreatedAt,
                 GradeName = s.Grade != null ? s.Grade.Name : null,
                 LocalGradeNumber = s.Grade != null ? s.Grade.LocalGradeNumber : 0,
-                StudentsCount = db.Students.Count(st => st.SectionId == s.Id && st.IsActive)
+                StudentsCount = db.Students.Count(st => st.SectionId == s.Id && st.IsActive && st.SchoolId == SchoolId)
             })
             .ToListAsync();
 
-        // جلب الطلاب الذين يشرف عليهم الموجه
         var students = await db.Students
             .Include(s => s.Section)
                 .ThenInclude(sec => sec!.Grade)
@@ -2469,10 +2304,10 @@ public async Task<IActionResult> GetTeachers()
             })
             .ToListAsync();
 
-        // جلب التحذيرات الصادرة عن الموجه
         var warnings = await db.Warnings
             .Include(w => w.Student)
             .Where(w => db.Students.Any(s => s.Id == w.StudentId && 
+                                             s.SchoolId == SchoolId &&
                                              s.Section != null && 
                                              s.Section.CounselorId == counselor.Id))
             .OrderByDescending(w => w.CreatedAt)
@@ -2489,10 +2324,10 @@ public async Task<IActionResult> GetTeachers()
             })
             .ToListAsync();
 
-        // جلب استدعاءات ولي الأمر الصادرة عن الموجه
         var summons = await db.GuardianSummons
             .Include(s => s.Student)
             .Where(s => db.Students.Any(st => st.Id == s.StudentId && 
+                                              st.SchoolId == SchoolId &&
                                               st.Section != null && 
                                               st.Section.CounselorId == counselor.Id))
             .OrderByDescending(s => s.CreatedAt)
@@ -2796,103 +2631,84 @@ public async Task<IActionResult> GetTeachers()
         if (student is null)
             return NotFound(new { message = $"لا يوجد طالب برقم {localStudentNumber} في هذه المدرسة" });
 
-        // 1. حذف العلامات (Marks)
         var marks = await db.Marks
             .Where(m => m.StudentId == student.Id)
             .ToListAsync();
         if (marks.Any())
             db.Marks.RemoveRange(marks);
 
-        // 2. حذف بطاقات التقارير (ReportCards)
         var reportCards = await db.ReportCards
             .Where(r => r.StudentId == student.Id)
             .ToListAsync();
         if (reportCards.Any())
             db.ReportCards.RemoveRange(reportCards);
 
-        // 3. حذف سجلات الحضور (StudentAttendances)
         var attendances = await db.StudentAttendances
             .Where(a => a.StudentId == student.Id)
             .ToListAsync();
         if (attendances.Any())
             db.StudentAttendances.RemoveRange(attendances);
 
-        // 4. حذف التحذيرات (Warnings)
         var warnings = await db.Warnings
             .Where(w => w.StudentId == student.Id)
             .ToListAsync();
         if (warnings.Any())
             db.Warnings.RemoveRange(warnings);
 
-        // 5. حذف العقوبات (Punishments)
         var punishments = await db.Punishments
             .Where(p => p.StudentId == student.Id)
             .ToListAsync();
         if (punishments.Any())
             db.Punishments.RemoveRange(punishments);
 
-        // 6. حذف التسجيلات في الأنشطة (ActivityRegistrations)
         var activityRegistrations = await db.ActivityRegistrations
             .Where(r => r.StudentId == student.Id)
             .ToListAsync();
         if (activityRegistrations.Any())
             db.ActivityRegistrations.RemoveRange(activityRegistrations);
 
-        // 7. ✅ حذف إعارات الكتب (BookLoans) - باستخدام StudentId مباشرة
         var bookLoans = await db.BookLoans
             .Where(l => l.StudentId == student.Id)
             .ToListAsync();
         if (bookLoans.Any())
             db.BookLoans.RemoveRange(bookLoans);
 
-        // 8. ✅ حذف حجوزات الكتب (BookReservations) - باستخدام StudentId مباشرة
         var bookReservations = await db.BookReservations
             .Where(r => r.StudentId == student.Id)
             .ToListAsync();
         if (bookReservations.Any())
             db.BookReservations.RemoveRange(bookReservations);
 
-        // 9. ✅ حذف طلبات الاستعارة (BookLoanRequests) - باستخدام StudentId مباشرة
         var loanRequests = await db.BookLoanRequests
             .Where(r => r.StudentId == student.Id)
             .ToListAsync();
         if (loanRequests.Any())
             db.BookLoanRequests.RemoveRange(loanRequests);
 
-        // 10. حذف سجل تطور الصفوف (StudentGradeHistory)
         var gradeHistory = await db.StudentGradeHistory
             .Where(h => h.StudentId == student.Id)
             .ToListAsync();
         if (gradeHistory.Any())
             db.StudentGradeHistory.RemoveRange(gradeHistory);
 
-        // 11. حذف الشكاوى (Complaints) - إذا كان الطالب هو صاحب الشكوى
         var complaints = await db.Complaints
             .Where(c => c.FromUserId == student.Id && c.FromUserType == UserType.Student)
             .ToListAsync();
         if (complaints.Any())
             db.Complaints.RemoveRange(complaints);
 
-        // 12. حذف الإشعارات (Notifications) - الخاصة بالطالب
         var notifications = await db.Notifications
             .Where(n => n.UserId == student.Id && n.UserType == UserType.Student)
             .ToListAsync();
         if (notifications.Any())
             db.Notifications.RemoveRange(notifications);
 
-        // 13. حذف استدعاءات ولي الأمر (GuardianSummons)
         var summons = await db.GuardianSummons
             .Where(s => s.StudentId == student.Id)
             .ToListAsync();
         if (summons.Any())
             db.GuardianSummons.RemoveRange(summons);
 
-        // ❌ إزالة LibraryMember - لم نعد نستخدمه
-        // var libraryMember = await db.LibraryMembers
-        //     .FirstOrDefaultAsync(m => m.StudentId == student.Id);
-        // if (libraryMember is not null) { ... }
-
-        // 14. أخيراً حذف الطالب نفسه
         db.Students.Remove(student);
         await db.SaveChangesAsync();
 
@@ -3093,10 +2909,6 @@ public async Task<IActionResult> GetTeachers()
     // صور الجداول - جميع العمليات (للمدير فقط)
     // ============================================
 
-    // ============================================
-    // 1. صورة جدول المعلم - رفع
-    // ============================================
-
     [HttpPost("schedule-images/teacher")]
     public async Task<IActionResult> UploadTeacherScheduleImage([FromForm] TeacherScheduleImageRequest request)
     {
@@ -3162,10 +2974,6 @@ public async Task<IActionResult> GetTeachers()
             }
         });
     }
-
-    // ============================================
-    // 2. صورة جدول المعلم - جلب
-    // ============================================
 
     [HttpGet("schedule-images/teacher/{localEmployeeNumber:int}")]
     public async Task<IActionResult> GetTeacherScheduleImage(int localEmployeeNumber)
@@ -3236,9 +3044,13 @@ public async Task<IActionResult> GetTeachers()
                     .Select(es => (int?)es.LocalEmployeeNumber)
                     .FirstOrDefault(),
                 CounselorName = s.Counselor != null ? s.Counselor.Name : null,
-                StudentsCount = db.Students.Count(st => st.SectionId == s.Id && st.IsActive),
+                StudentsCount = db.Students.Count(st => st.SectionId == s.Id && st.IsActive && st.SchoolId == SchoolId),
                 Teachers = db.TeacherGrades
-                    .Where(tg => tg.SectionId == s.Id)
+                    .Where(tg => tg.SectionId == s.Id &&
+                                 tg.Teacher != null &&
+                                 db.EmployeeSchools.Any(es => es.EmployeeId == tg.TeacherId && 
+                                                             es.SchoolId == SchoolId && 
+                                                             es.IsActive))
                     .Select(tg => new
                     {
                         tg.TeacherId,
@@ -3251,7 +3063,7 @@ public async Task<IActionResult> GetTeachers()
                             .FirstOrDefault(),
                         tg.SubjectId,
                         LocalSubjectId = db.Subjects
-                            .Where(sub => sub.Id == tg.SubjectId)
+                            .Where(sub => sub.Id == tg.SubjectId && sub.SchoolId == SchoolId)
                             .Select(sub => sub.LocalSubjectId)
                             .FirstOrDefault(),
                         SubjectName = tg.Subject != null ? tg.Subject.Name : null,
@@ -3272,14 +3084,9 @@ public async Task<IActionResult> GetTeachers()
         });
     }
 
-    // ============================================
-    // 3. صورة جدول المعلم - حذف (باستخدام LocalEmployeeNumber)
-    // ============================================
-
     [HttpDelete("schedule-images/teacher/{localEmployeeNumber:int}")]
     public async Task<IActionResult> DeleteTeacherScheduleImage(int localEmployeeNumber)
     {
-        // ✅ 1. البحث عن الموظف في المدرسة
         var employeeSchool = await db.EmployeeSchools
             .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
                                        es.LocalEmployeeNumber == localEmployeeNumber &&
@@ -3291,7 +3098,6 @@ public async Task<IActionResult> GetTeachers()
                 message = $"لا يوجد موظف برقم {localEmployeeNumber} في هذه المدرسة" 
             });
 
-        // ✅ 2. جلب الموظف
         var employee = await db.Employees
             .FirstOrDefaultAsync(e => e.Id == employeeSchool.EmployeeId);
 
@@ -3301,7 +3107,6 @@ public async Task<IActionResult> GetTeachers()
                 message = "الموظف غير موجود" 
             });
 
-        // ✅ 3. جلب صورة الجدول للمعلم (بدون التحقق من Role Teacher هنا)
         var image = await db.ScheduleImages
             .FirstOrDefaultAsync(s => s.SchoolId == SchoolId && 
                                       s.TeacherId == employee.Id && 
@@ -3313,10 +3118,8 @@ public async Task<IActionResult> GetTeachers()
                 message = $"لا توجد صورة جدول للمعلم رقم {localEmployeeNumber}" 
             });
 
-        // ✅ 4. حذف الملف الفعلي
         var fileDeleted = DeleteScheduleImageFile(image.ImageUrl);
 
-        // ✅ 5. حذف السجل من قاعدة البيانات
         db.ScheduleImages.Remove(image);
         await db.SaveChangesAsync();
 
@@ -3333,10 +3136,6 @@ public async Task<IActionResult> GetTeachers()
             }
         });
     }
-
-    // ============================================
-    // 4. صورة جدول الشعبة - رفع
-    // ============================================
 
     [HttpPost("schedule-images/section")]
     public async Task<IActionResult> UploadSectionScheduleImage([FromForm] ScheduleImageRequest request)
@@ -3405,10 +3204,6 @@ public async Task<IActionResult> GetTeachers()
         });
     }
 
-    // ============================================
-    // 5. صورة جدول الشعبة - جلب
-    // ============================================
-
     [HttpGet("schedule-images/section/{localGradeNumber:int}/{localSectionNumber:int}")]
     public async Task<IActionResult> GetSectionScheduleImage(int localGradeNumber, int localSectionNumber)
     {
@@ -3449,10 +3244,6 @@ public async Task<IActionResult> GetTeachers()
 
         return Ok(image);
     }
-
-    // ============================================
-    // 6. صورة جدول الشعبة - حذف (باستخدام Local IDs)
-    // ============================================
 
     [HttpDelete("schedule-images/section/{localGradeNumber:int}/{localSectionNumber:int}")]
     public async Task<IActionResult> DeleteSectionScheduleImage(int localGradeNumber, int localSectionNumber)
@@ -3497,10 +3288,6 @@ public async Task<IActionResult> GetTeachers()
             }
         });
     }
-
-    // ============================================
-    // 7. جلب جميع صور الجداول
-    // ============================================
 
     [HttpGet("schedule-images")]
     public async Task<IActionResult> GetScheduleImages(
@@ -3561,10 +3348,6 @@ public async Task<IActionResult> GetTeachers()
 
         return Ok(images);
     }
-
-    // ============================================
-    // 8. حذف صورة عامة (باستخدام ID)
-    // ============================================
 
     [HttpDelete("schedule-images/{id:int}")]
     public async Task<IActionResult> DeleteScheduleImage(int id)
@@ -3825,7 +3608,7 @@ public async Task<IActionResult> GetTeachers()
 
         var sections = await db.Sections
             .Include(s => s.Grade)
-            .Where(s => s.CounselorId == counselor.Id)
+            .Where(s => s.SchoolId == SchoolId && s.CounselorId == counselor.Id)
             .Select(s => new
             {
                 s.Id,
@@ -3833,14 +3616,16 @@ public async Task<IActionResult> GetTeachers()
                 LocalSectionNumber = s.LocalSectionNumber,
                 GradeName = s.Grade != null ? s.Grade.Name : null,
                 LocalGradeNumber = s.Grade != null ? s.Grade.LocalGradeNumber : 0,
-                StudentsCount = db.Students.Count(x => x.SectionId == s.Id)
+                StudentsCount = db.Students.Count(x => x.SectionId == s.Id && x.SchoolId == SchoolId)
             })
             .ToListAsync();
 
         var warnings = await db.Warnings
             .Include(w => w.Student)
-            .Where(w => db.Students.Any(s => s.Id == w.StudentId && s.SectionId != null &&
-                db.Sections.Any(x => x.Id == s.SectionId && x.CounselorId == counselor.Id)))
+            .Where(w => db.Students.Any(s => s.Id == w.StudentId && 
+                                             s.SchoolId == SchoolId &&
+                                             s.SectionId != null &&
+                                             db.Sections.Any(x => x.Id == s.SectionId && x.CounselorId == counselor.Id)))
             .OrderByDescending(w => w.CreatedAt).Take(100)
             .Select(w => new
             {
@@ -3856,8 +3641,10 @@ public async Task<IActionResult> GetTeachers()
 
         var summons = await db.GuardianSummons
             .Include(s => s.Student)
-            .Where(s => db.Students.Any(st => st.Id == s.StudentId && st.SectionId != null &&
-                db.Sections.Any(x => x.Id == st.SectionId && x.CounselorId == counselor.Id)))
+            .Where(s => db.Students.Any(st => st.Id == s.StudentId && 
+                                              st.SchoolId == SchoolId &&
+                                              st.SectionId != null &&
+                                              db.Sections.Any(x => x.Id == st.SectionId && x.CounselorId == counselor.Id)))
             .OrderByDescending(s => s.CreatedAt).Take(100)
             .Select(s => new
             {
@@ -3873,8 +3660,10 @@ public async Task<IActionResult> GetTeachers()
 
         var recentAttendance = await db.StudentAttendances
             .Include(a => a.Student)
-            .Where(a => db.Students.Any(s => s.Id == a.StudentId && s.SectionId != null &&
-                db.Sections.Any(x => x.Id == s.SectionId && x.CounselorId == counselor.Id)))
+            .Where(a => db.Students.Any(s => s.Id == a.StudentId && 
+                                             s.SchoolId == SchoolId &&
+                                             s.SectionId != null &&
+                                             db.Sections.Any(x => x.Id == s.SectionId && x.CounselorId == counselor.Id)))
             .OrderByDescending(a => a.Date).Take(100)
             .Select(a => new
             {
@@ -3887,8 +3676,9 @@ public async Task<IActionResult> GetTeachers()
             .ToListAsync();
 
         var totalStudents = await db.Students
-            .CountAsync(s => s.SectionId != null &&
-                db.Sections.Any(x => x.Id == s.SectionId && x.CounselorId == counselor.Id));
+            .CountAsync(s => s.SchoolId == SchoolId &&
+                            s.SectionId != null &&
+                            db.Sections.Any(x => x.Id == s.SectionId && x.CounselorId == counselor.Id));
 
         var totalWarnings = warnings.Count;
         var totalSummons = summons.Count;
@@ -3915,134 +3705,414 @@ public async Task<IActionResult> GetTeachers()
         });
     }
 
-   [HttpPost("promote-students")]
-public async Task<IActionResult> PromoteStudents([FromBody] PromoteRequest request)
-{
-    try
+    // ============================================
+    // ترقية الطلاب
+    // ============================================
+
+    [HttpPost("promote-students")]
+    public async Task<IActionResult> PromoteStudents([FromBody] PromoteRequest request)
     {
-        const int semester = 2;
-        var currentYear = DateTime.Now.Year;
-        
-        // ✅ 1. جلب الصف
-        var grade = await db.Grades
-            .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
-                                      g.LocalGradeNumber == request.LocalGradeNumber);
-
-        if (grade is null)
-            return BadRequest(new { success = false, message = "الصف غير موجود" });
-
-        // ✅ 2. التحقق من معالجة الصف مسبقاً
-        var alreadyProcessed = await db.StudentGradeHistory
-            .AnyAsync(h => h.GradeId == grade.Id && 
-                          h.AcademicYear == currentYear && 
-                          h.Semester == semester);
-
-        if (alreadyProcessed)
+        try
         {
-            var processedInfo = await db.StudentGradeHistory
-                .Where(h => h.GradeId == grade.Id && 
-                           h.AcademicYear == currentYear && 
-                           h.Semester == semester)
-                .GroupBy(h => h.IsPassed)
-                .Select(g => new
-                {
-                    IsPassed = g.Key,
-                    Count = g.Count()
-                })
-                .ToListAsync();
+            const int semester = 2;
+            var currentYear = DateTime.Now.Year;
+            
+            var grade = await db.Grades
+                .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                          g.LocalGradeNumber == request.LocalGradeNumber);
 
-            var passedCount = processedInfo.FirstOrDefault(x => x.IsPassed)?.Count ?? 0;
-            var failedCount = processedInfo.FirstOrDefault(x => !x.IsPassed)?.Count ?? 0;
+            if (grade is null)
+                return BadRequest(new { success = false, message = "الصف غير موجود" });
 
-            return BadRequest(new
+            var alreadyProcessed = await db.StudentGradeHistory
+                .AnyAsync(h => h.GradeId == grade.Id && 
+                              h.AcademicYear == currentYear && 
+                              h.Semester == semester);
+
+            if (alreadyProcessed)
             {
-                success = false,
-                message = $"تمت معالجة الصف {grade.Name} للعام {currentYear} مسبقاً",
-                data = new
-                {
-                    GradeName = grade.Name,
-                    AcademicYear = currentYear,
-                    CanProcess = false,
-                    Hint = $"يمكنك معالجة الصف {grade.Name} مرة أخرى في العام {currentYear + 1} مع الطلاب الجدد",
-                    Statistics = new
+                var processedInfo = await db.StudentGradeHistory
+                    .Where(h => h.GradeId == grade.Id && 
+                               h.AcademicYear == currentYear && 
+                               h.Semester == semester)
+                    .GroupBy(h => h.IsPassed)
+                    .Select(g => new
                     {
-                        TotalStudents = passedCount + failedCount,
-                        PassedCount = passedCount,
-                        FailedCount = failedCount
-                    }
-                }
-            });
-        }
+                        IsPassed = g.Key,
+                        Count = g.Count()
+                    })
+                    .ToListAsync();
 
-        // ✅ 3. جلب جميع الطلاب في الصف
-        var students = await db.Students
-            .Include(s => s.Section)
-            .Where(s => s.SchoolId == SchoolId && 
-                        s.Section != null &&
-                        s.Section.GradeId == grade.Id &&
-                        s.IsActive)
-            .ToListAsync();
+                var passedCount = processedInfo.FirstOrDefault(x => x.IsPassed)?.Count ?? 0;
+                var failedCount = processedInfo.FirstOrDefault(x => !x.IsPassed)?.Count ?? 0;
 
-        if (!students.Any())
-        {
-            return Ok(new
-            {
-                success = true,
-                message = "لا يوجد طلاب في هذا الصف للترقية"
-            });
-        }
-
-        // ✅ 4. تصفية الطلاب الذين لم يتم ترقيتهم مسبقاً
-        var eligibleStudents = new List<Student>();
-        var alreadyPromotedStudents = new List<object>();
-
-        foreach (var student in students)
-        {
-            // ✅ التحقق من عدم ترقية الطالب مسبقاً في هذا العام
-            var alreadyPromoted = await db.StudentGradeHistory
-                .AnyAsync(h => h.StudentId == student.Id &&
-                              h.AcademicYear == currentYear &&
-                              h.IsPassed);
-
-            if (alreadyPromoted)
-            {
-                alreadyPromotedStudents.Add(new
+                return BadRequest(new
                 {
-                    student.Id,
-                    student.Name,
-                    student.LocalStudentNumber,
-                    Reason = "تم ترقيته مسبقاً في هذا العام"
+                    success = false,
+                    message = $"تمت معالجة الصف {grade.Name} للعام {currentYear} مسبقاً",
+                    data = new
+                    {
+                        GradeName = grade.Name,
+                        AcademicYear = currentYear,
+                        CanProcess = false,
+                        Hint = $"يمكنك معالجة الصف {grade.Name} مرة أخرى في العام {currentYear + 1} مع الطلاب الجدد",
+                        Statistics = new
+                        {
+                            TotalStudents = passedCount + failedCount,
+                            PassedCount = passedCount,
+                            FailedCount = failedCount
+                        }
+                    }
                 });
             }
-            else
-            {
-                eligibleStudents.Add(student);
-            }
-        }
 
-        // ✅ 5. إذا لم يوجد طلاب مؤهلين
-        if (!eligibleStudents.Any())
-        {
-            return Ok(new
+            var students = await db.Students
+                .Include(s => s.Section)
+                .Where(s => s.SchoolId == SchoolId && 
+                            s.Section != null &&
+                            s.Section.GradeId == grade.Id &&
+                            s.IsActive)
+                .ToListAsync();
+
+            if (!students.Any())
             {
-                success = true,
-                message = $"جميع طلاب {grade.Name} تمت ترقيتهم مسبقاً للعام {currentYear}",
-                data = new
+                return Ok(new
                 {
-                    TotalStudents = students.Count,
-                    AlreadyPromoted = alreadyPromotedStudents.Count,
-                    EligibleStudents = 0,
-                    AlreadyPromotedStudents = alreadyPromotedStudents
-                }
-            });
-        }
+                    success = true,
+                    message = "لا يوجد طلاب في هذا الصف للترقية"
+                });
+            }
 
-        // ✅ 6. التحقق من وجود FinalExam للطلاب المؤهلين فقط
-        if (grade.Level < 12)
-        {
-            var missingFinalExamStudents = new List<object>();
+            var eligibleStudents = new List<Student>();
+            var alreadyPromotedStudents = new List<object>();
+
+            foreach (var student in students)
+            {
+                var alreadyPromoted = await db.StudentGradeHistory
+                    .AnyAsync(h => h.StudentId == student.Id &&
+                                  h.AcademicYear == currentYear &&
+                                  h.IsPassed);
+
+                if (alreadyPromoted)
+                {
+                    alreadyPromotedStudents.Add(new
+                    {
+                        student.Id,
+                        student.Name,
+                        student.LocalStudentNumber,
+                        Reason = "تم ترقيته مسبقاً في هذا العام"
+                    });
+                }
+                else
+                {
+                    eligibleStudents.Add(student);
+                }
+            }
+
+            if (!eligibleStudents.Any())
+            {
+                return Ok(new
+                {
+                    success = true,
+                    message = $"جميع طلاب {grade.Name} تمت ترقيتهم مسبقاً للعام {currentYear}",
+                    data = new
+                    {
+                        TotalStudents = students.Count,
+                        AlreadyPromoted = alreadyPromotedStudents.Count,
+                        EligibleStudents = 0,
+                        AlreadyPromotedStudents = alreadyPromotedStudents
+                    }
+                });
+            }
+
+            if (grade.Level < 12)
+            {
+                var missingFinalExamStudents = new List<object>();
+
+                foreach (var student in eligibleStudents)
+                {
+                    var studentSubjects = await db.TeacherGrades
+                        .Where(tg => tg.SectionId == student.SectionId)
+                        .Select(tg => tg.SubjectId)
+                        .Distinct()
+                        .ToListAsync();
+
+                    var missingSubjects = new List<string>();
+
+                    foreach (var subjectId in studentSubjects)
+                    {
+                        var hasFinalExam = await db.Marks
+                            .AnyAsync(m => m.StudentId == student.Id && 
+                                          m.SubjectId == subjectId && 
+                                          m.Semester == semester &&
+                                          m.FinalExam > 0);
+
+                        if (!hasFinalExam)
+                        {
+                            var subjectName = await db.Subjects
+                                .Where(s => s.Id == subjectId)
+                                .Select(s => s.Name)
+                                .FirstOrDefaultAsync() ?? "غير معروف";
+
+                            missingSubjects.Add(subjectName);
+                        }
+                    }
+
+                    if (missingSubjects.Any())
+                    {
+                        missingFinalExamStudents.Add(new
+                        {
+                            student.Id,
+                            student.Name,
+                            student.LocalStudentNumber,
+                            MissingSubjects = missingSubjects
+                        });
+                    }
+                }
+
+                if (missingFinalExamStudents.Any())
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        message = "بعض الطلاب لديهم علامات ناقصة (FinalExam)",
+                        missingStudents = missingFinalExamStudents
+                    });
+                }
+            }
+
+            var allResults = new List<StudentFinalResult>();
+            var incompleteStudents = new List<object>();
 
             foreach (var student in eligibleStudents)
+            {
+                var result = await CalculateStudentFinalResultAsync(
+                    student.Id, 
+                    semester, 
+                    SchoolId,
+                    currentYear);
+
+                if (!result.IsComplete)
+                {
+                    incompleteStudents.Add(new
+                    {
+                        student.Id,
+                        student.Name,
+                        student.LocalStudentNumber,
+                        MissingSubjects = result.MissingSubjects
+                    });
+                }
+
+                allResults.Add(result);
+            }
+
+            if (incompleteStudents.Any())
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "بعض الطلاب لديهم علامات ناقصة",
+                    incompleteStudents = incompleteStudents
+                });
+            }
+
+            var nextLevel = grade.Level + 1;
+            var nextGrade = await db.Grades
+                .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                          g.Level == nextLevel);
+
+            using var transaction = await db.Database.BeginTransactionAsync();
+
+            try
+            {
+                var promotedStudents = new List<StudentFinalResult>();
+                var failedStudents = new List<StudentFinalResult>();
+                var graduatedStudents = new List<StudentFinalResult>();
+
+                foreach (var result in allResults)
+                {
+                    var alreadyPromoted = await db.StudentGradeHistory
+                        .AnyAsync(h => h.StudentId == result.StudentId &&
+                                      h.AcademicYear == currentYear &&
+                                      h.IsPassed);
+
+                    if (alreadyPromoted)
+                    {
+                        continue;
+                    }
+
+                    var isPassed = result.OverallPercentage >= request.PassPercent;
+
+                    var history = new StudentGradeHistory
+                    {
+                        StudentId = result.StudentId,
+                        GradeId = grade.Id,
+                        SectionId = eligibleStudents.First(s => s.Id == result.StudentId).SectionId ?? 0,
+                        AcademicYear = currentYear,
+                        Semester = semester,
+                        IsPassed = isPassed,
+                        Average = result.OverallPercentage,
+                        CreatedAt = DateTime.UtcNow
+                    };
+
+                    db.StudentGradeHistory.Add(history);
+
+                    if (isPassed)
+                    {
+                        if (grade.Level >= 12)
+                        {
+                            var student = eligibleStudents.First(s => s.Id == result.StudentId);
+                            student.IsActive = false;
+                            graduatedStudents.Add(result);
+                        }
+                        else if (nextGrade != null)
+                        {
+                            var student = eligibleStudents.First(s => s.Id == result.StudentId);
+                            var nextSection = await GetOrCreateSectionAsync(SchoolId, nextGrade.Id);
+                            student.SectionId = nextSection.Id;
+                            promotedStudents.Add(result);
+                        }
+                        else
+                        {
+                            failedStudents.Add(result);
+                        }
+                    }
+                    else
+                    {
+                        failedStudents.Add(result);
+                    }
+                }
+
+                await db.SaveChangesAsync();
+                await transaction.CommitAsync();
+
+                return Ok(new
+                {
+                    success = true,
+                    message = $"تمت معالجة ترقية {grade.Name} للعام {currentYear} بنجاح",
+                    data = new
+                    {
+                        AcademicYear = currentYear,
+                        Semester = semester,
+                        PassPercent = request.PassPercent,
+                        CurrentGrade = new
+                        {
+                            grade.Id,
+                            grade.Name,
+                            grade.Level,
+                            grade.LocalGradeNumber
+                        },
+                        NextGrade = nextGrade != null ? new
+                        {
+                            nextGrade.Id,
+                            nextGrade.Name,
+                            nextGrade.Level,
+                            nextGrade.LocalGradeNumber
+                        } : null,
+                        Statistics = new
+                        {
+                            TotalStudentsInGrade = students.Count,
+                            AlreadyPromoted = alreadyPromotedStudents.Count,
+                            EligibleStudents = eligibleStudents.Count,
+                            PromotedCount = promotedStudents.Count,
+                            FailedCount = failedStudents.Count,
+                            GraduatedCount = graduatedStudents.Count,
+                            SuccessRate = eligibleStudents.Any() ? 
+                                Math.Round((decimal)promotedStudents.Count / eligibleStudents.Count * 100, 2) : 0
+                        },
+                        PromotedStudents = promotedStudents.Select(s => new
+                        {
+                            s.StudentId,
+                            s.StudentName,
+                            s.LocalStudentNumber,
+                            s.OverallPercentage
+                        }).ToList(),
+                        FailedStudents = failedStudents.Select(s => new
+                        {
+                            s.StudentId,
+                            s.StudentName,
+                            s.LocalStudentNumber,
+                            s.OverallPercentage
+                        }).ToList(),
+                        GraduatedStudents = graduatedStudents.Select(s => new
+                        {
+                            s.StudentId,
+                            s.StudentName,
+                            s.LocalStudentNumber,
+                            s.OverallPercentage
+                        }).ToList(),
+                        AlreadyPromotedStudents = alreadyPromotedStudents,
+                        Note = $"يمكن معالجة {grade.Name} مرة أخرى في العام {currentYear + 1} مع الطلاب الجدد"
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                await transaction.RollbackAsync();
+                throw new Exception($"حدث خطأ أثناء معالجة الترقية: {ex.Message}", ex);
+            }
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { 
+                success = false, 
+                message = $"حدث خطأ: {ex.Message}" 
+            });
+        }
+    }
+
+    // ============================================
+    // جلب الطلاب الذين لم تدخل علاماتهم النهائية
+    // ============================================
+
+    [HttpGet("students-missing-final-exam")]
+    public async Task<IActionResult> GetStudentsMissingFinalExam(
+        [FromQuery] int localGradeNumber,
+        [FromQuery] int semester = 2)
+    {
+        try
+        {
+            var currentYear = DateTime.Now.Year;
+
+            var grade = await db.Grades
+                .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                          g.LocalGradeNumber == localGradeNumber);
+
+            if (grade is null)
+            {
+                return NotFound(new
+                {
+                    success = false,
+                    message = $"لا يوجد صف برقم {localGradeNumber} للعام {currentYear}"
+                });
+            }
+
+            var students = await db.Students
+                .Include(s => s.Section)
+                .Where(s => s.SchoolId == SchoolId && 
+                            s.Section != null &&
+                            s.Section.GradeId == grade.Id &&
+                            s.IsActive)
+                .ToListAsync();
+
+            if (!students.Any())
+            {
+                return Ok(new
+                {
+                    success = true,
+                    message = "لا يوجد طلاب في هذا الصف",
+                    data = new
+                    {
+                        TotalStudents = 0,
+                        StudentsWithMissingMarks = 0,
+                        Students = new List<object>()
+                    }
+                });
+            }
+
+            var result = new List<object>();
+
+            foreach (var student in students)
             {
                 var studentSubjects = await db.TeacherGrades
                     .Where(tg => tg.SectionId == student.SectionId)
@@ -4073,941 +4143,611 @@ public async Task<IActionResult> PromoteStudents([FromBody] PromoteRequest reque
 
                 if (missingSubjects.Any())
                 {
-                    missingFinalExamStudents.Add(new
-                    {
-                        student.Id,
-                        student.Name,
-                        student.LocalStudentNumber,
-                        MissingSubjects = missingSubjects
-                    });
-                }
-            }
-
-            if (missingFinalExamStudents.Any())
-            {
-                return BadRequest(new
-                {
-                    success = false,
-                    message = "بعض الطلاب لديهم علامات ناقصة (FinalExam)",
-                    missingStudents = missingFinalExamStudents
-                });
-            }
-        }
-
-        // ✅ 7. حساب النتائج للطلاب المؤهلين فقط
-        var allResults = new List<StudentFinalResult>();
-        var incompleteStudents = new List<object>();
-
-        foreach (var student in eligibleStudents)
-        {
-            var result = await CalculateStudentFinalResultAsync(
-                student.Id, 
-                semester, 
-                SchoolId,
-                currentYear);
-
-            if (!result.IsComplete)
-            {
-                incompleteStudents.Add(new
-                {
-                    student.Id,
-                    student.Name,
-                    student.LocalStudentNumber,
-                    MissingSubjects = result.MissingSubjects
-                });
-            }
-
-            allResults.Add(result);
-        }
-
-        if (incompleteStudents.Any())
-        {
-            return BadRequest(new
-            {
-                success = false,
-                message = "بعض الطلاب لديهم علامات ناقصة",
-                incompleteStudents = incompleteStudents
-            });
-        }
-
-        // ✅ 8. جلب الصف التالي
-        var nextLevel = grade.Level + 1;
-        var nextGrade = await db.Grades
-            .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
-                                      g.Level == nextLevel);
-
-        // ✅ 9. معالجة الترقية
-        using var transaction = await db.Database.BeginTransactionAsync();
-
-        try
-        {
-            var promotedStudents = new List<StudentFinalResult>();
-            var failedStudents = new List<StudentFinalResult>();
-            var graduatedStudents = new List<StudentFinalResult>();
-
-            foreach (var result in allResults)
-            {
-                // ✅ التحقق مرة أخرى قبل الترقية (للتأكيد)
-                var alreadyPromoted = await db.StudentGradeHistory
-                    .AnyAsync(h => h.StudentId == result.StudentId &&
-                                  h.AcademicYear == currentYear &&
-                                  h.IsPassed);
-
-                if (alreadyPromoted)
-                {
-                    // ❌ تخطي الطالب لأنه تم ترقيته مسبقاً
-                    continue;
-                }
-
-                var isPassed = result.OverallPercentage >= request.PassPercent;
-
-                var history = new StudentGradeHistory
-                {
-                    StudentId = result.StudentId,
-                    GradeId = grade.Id,
-                    SectionId = eligibleStudents.First(s => s.Id == result.StudentId).SectionId ?? 0,
-                    AcademicYear = currentYear,
-                    Semester = semester,
-                    IsPassed = isPassed,
-                    Average = result.OverallPercentage,
-                    CreatedAt = DateTime.UtcNow
-                };
-
-                db.StudentGradeHistory.Add(history);
-
-                if (isPassed)
-                {
-                    if (grade.Level >= 12)
-                    {
-                        var student = eligibleStudents.First(s => s.Id == result.StudentId);
-                        student.IsActive = false;
-                        graduatedStudents.Add(result);
-                    }
-                    else if (nextGrade != null)
-                    {
-                        var student = eligibleStudents.First(s => s.Id == result.StudentId);
-                        var nextSection = await GetOrCreateSectionAsync(SchoolId, nextGrade.Id);
-                        student.SectionId = nextSection.Id;
-                        promotedStudents.Add(result);
-                    }
-                    else
-                    {
-                        failedStudents.Add(result);
-                    }
-                }
-                else
-                {
-                    failedStudents.Add(result);
-                }
-            }
-
-            await db.SaveChangesAsync();
-            await transaction.CommitAsync();
-
-            return Ok(new
-            {
-                success = true,
-                message = $"تمت معالجة ترقية {grade.Name} للعام {currentYear} بنجاح",
-                data = new
-                {
-                    AcademicYear = currentYear,
-                    Semester = semester,
-                    PassPercent = request.PassPercent,
-                    CurrentGrade = new
-                    {
-                        grade.Id,
-                        grade.Name,
-                        grade.Level,
-                        grade.LocalGradeNumber
-                    },
-                    NextGrade = nextGrade != null ? new
-                    {
-                        nextGrade.Id,
-                        nextGrade.Name,
-                        nextGrade.Level,
-                        nextGrade.LocalGradeNumber
-                    } : null,
-                    Statistics = new
-                    {
-                        TotalStudentsInGrade = students.Count,
-                        AlreadyPromoted = alreadyPromotedStudents.Count,
-                        EligibleStudents = eligibleStudents.Count,
-                        PromotedCount = promotedStudents.Count,
-                        FailedCount = failedStudents.Count,
-                        GraduatedCount = graduatedStudents.Count,
-                        SuccessRate = eligibleStudents.Any() ? 
-                            Math.Round((decimal)promotedStudents.Count / eligibleStudents.Count * 100, 2) : 0
-                    },
-                    PromotedStudents = promotedStudents.Select(s => new
-                    {
-                        s.StudentId,
-                        s.StudentName,
-                        s.LocalStudentNumber,
-                        s.OverallPercentage
-                    }).ToList(),
-                    FailedStudents = failedStudents.Select(s => new
-                    {
-                        s.StudentId,
-                        s.StudentName,
-                        s.LocalStudentNumber,
-                        s.OverallPercentage
-                    }).ToList(),
-                    GraduatedStudents = graduatedStudents.Select(s => new
-                    {
-                        s.StudentId,
-                        s.StudentName,
-                        s.LocalStudentNumber,
-                        s.OverallPercentage
-                    }).ToList(),
-                    AlreadyPromotedStudents = alreadyPromotedStudents,
-                    Note = $"يمكن معالجة {grade.Name} مرة أخرى في العام {currentYear + 1} مع الطلاب الجدد"
-                }
-            });
-        }
-        catch (Exception ex)
-        {
-            await transaction.RollbackAsync();
-            throw new Exception($"حدث خطأ أثناء معالجة الترقية: {ex.Message}", ex);
-        }
-    }
-    catch (Exception ex)
-    {
-        return BadRequest(new { 
-            success = false, 
-            message = $"حدث خطأ: {ex.Message}" 
-        });
-    }
-}
-
-// ============================================
-// دوال مساعدة
-// ============================================
-private async Task<GradePromotionResult> ProcessGradePromotionAsync(
-    Grade grade,
-    List<Student> students,
-    int currentYear,
-    int nextYear,
-    int semester,
-    decimal passPercent)
-{
-    // ✅ جلب الصف التالي
-    var nextLevel = grade.Level + 1;
-    var nextGrade = await db.Grades
-        .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
-                                  g.Level == nextLevel );
-
-    var promotedStudents = new List<Student>();
-    var failedStudents = new List<Student>();
-    var graduatedStudents = new List<Student>();
-    var historyEntries = new List<StudentGradeHistory>();
-
-    foreach (var student in students)
-    {
-        // ✅ حساب المعدل
-        var average = await GetStudentFinalAverageAsync(student.Id);
-        var passed = average >= passPercent;
-
-        // ✅ تسجيل سجل الترقية
-        historyEntries.Add(new StudentGradeHistory
-        {
-            StudentId = student.Id,
-            GradeId = grade.Id,
-            SectionId = student.SectionId ?? 0,
-            AcademicYear = currentYear,
-            Semester = semester,
-            IsPassed = passed,
-            Average = average,
-            CreatedAt = DateTime.UtcNow
-        });
-
-        if (passed)
-        {
-            // ✅ معالجة خاصة للصف الثاني عشر
-            if (grade.Level >= 12)
-            {
-                // ✅ طلاب الصف 12 الناجحين → يتخرجون
-                student.IsActive = false;
-                graduatedStudents.Add(student);
-            }
-            else if (nextGrade is not null)
-            {
-                // ✅ باقي الصفوف → ينتقلون للصف التالي
-                var nextSection = await GetOrCreateSectionAsync(SchoolId, nextGrade.Id);
-                student.SectionId = nextSection.Id;
-                promotedStudents.Add(student);
-            }
-            else
-            {
-                // ✅ حالة استثنائية (لا يوجد صف تالي)
-                failedStudents.Add(student);
-            }
-        }
-        else
-        {
-            // ✅ الطالب راسب → يبقى في نفس الصف
-            failedStudents.Add(student);
-        }
-    }
-
-    // ✅ حفظ سجل الترقية
-    if (historyEntries.Any())
-        db.StudentGradeHistory.AddRange(historyEntries);
-
-    return new GradePromotionResult
-    {
-        GradeName = grade.Name,
-        Level = grade.Level,
-        LocalGradeNumber = grade.LocalGradeNumber,
-        TotalStudents = students.Count,
-        PromotedCount = promotedStudents.Count,
-        FailedCount = failedStudents.Count,
-        GraduatedCount = graduatedStudents.Count,
-        PromotedStudents = promotedStudents.Select(s => new StudentBasicInfo { Id = s.Id, Name = s.Name, LocalStudentNumber = s.LocalStudentNumber }).ToList(),
-        FailedStudents = failedStudents.Select(s => new StudentBasicInfo { Id = s.Id, Name = s.Name, LocalStudentNumber = s.LocalStudentNumber }).ToList(),
-        GraduatedStudents = graduatedStudents.Select(s => new StudentBasicInfo { Id = s.Id, Name = s.Name, LocalStudentNumber = s.LocalStudentNumber }).ToList(),
-        Status = "Processed",
-        Message = "تمت المعالجة بنجاح"
-    };
-}
-
-// ============================================
-// دوال مساعدة أخرى
-// ============================================
-
-private async Task<decimal> GetStudentFinalAverageAsync(int studentId)
-{
-    var marks = await db.Marks
-        .Where(m => m.StudentId == studentId)
-        .ToListAsync();
-
-    return marks.Any() ? marks.Average(m => m.Total) : 0;
-}
-
-private async Task<Section> GetOrCreateSectionAsync(int schoolId, int gradeId)
-{
-    var section = await db.Sections
-        .FirstOrDefaultAsync(s => s.GradeId == gradeId);
-
-    if (section is null)
-    {
-        var usedNumbers = await db.Sections
-            .Where(s => s.GradeId == gradeId)
-            .Select(s => s.LocalSectionNumber)
-            .ToListAsync();
-
-        int newLocalNumber = 1;
-        while (usedNumbers.Contains(newLocalNumber)) newLocalNumber++;
-
-        section = new Section
-        {
-            Name = $"الشعبة {GetSectionLetter(newLocalNumber)}",
-            GradeId = gradeId,
-            SchoolId = schoolId,
-            LocalSectionNumber = newLocalNumber,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        db.Sections.Add(section);
-        await db.SaveChangesAsync();
-    }
-
-    return section;
-}
-
-private string GetSectionLetter(int number) => number switch
-{
-    1 => "أ",
-    2 => "ب",
-    3 => "ج",
-    4 => "د",
-    5 => "ه",
-    6 => "و",
-    7 => "ز",
-    8 => "ح",
-    9 => "ط",
-    10 => "ي",
-    _ => number.ToString()
-};
-
-private int GetCurrentAcademicYear()
-{
-    var now = DateTime.Now;
-    var currentYear = now.Year;
-    var currentMonth = now.Month;
-    
-    // ✅ إذا كنا في النصف الثاني من العام (سبتمبر - ديسمبر)
-    // نعتبر أننا في السنة الدراسية الحالية
-    if (currentMonth >= 9 && currentMonth <= 12)
-    {
-        return currentYear;  // مثلاً: سبتمبر 2026 → السنة الدراسية 2026
-    }
-    // ✅ إذا كنا في النصف الأول من العام (يناير - أغسطس)
-    // نعتبر أننا في السنة الدراسية الماضية
-    else
-    {
-        return currentYear - 1;  // مثلاً: يونيو 2026 → السنة الدراسية 2025
-    }
-}
-
-// ✅ دالة لحساب السنة الدراسية التالية
-private int GetNextAcademicYear(int currentAcademicYear)
-{
-    return currentAcademicYear + 1;
-}
-
-private async Task SendBulkPromotionNotificationsAsync(List<GradePromotionResult> results)
-{
-    var tasks = new List<Task>();
-
-    foreach (var gradeResult in results)
-    {
-        // ✅ إشعارات للطلاب المترقين
-        foreach (var student in gradeResult.PromotedStudents)
-        {
-            tasks.Add(notifier.SendAsync(student.Id, UserType.Student,
-                "تهانينا! لقد تم ترقيتك",
-                $"لقد نجحت وتم ترقيتك من {gradeResult.GradeName} إلى الصف التالي",
-                "promotion"));
-        }
-
-        // ✅ إشعارات للطلاب الراسبين
-        foreach (var student in gradeResult.FailedStudents)
-        {
-            tasks.Add(notifier.SendAsync(student.Id, UserType.Student,
-                "للأسف، لم تنجح هذا العام",
-                $"لم تنجح في {gradeResult.GradeName}. نتمنى لك التوفيق في العام القادم",
-                "failure"));
-        }
-
-        // ✅ إشعارات للطلاب المتخرجين (الصف 12)
-        foreach (var student in gradeResult.GraduatedStudents)
-        {
-            tasks.Add(notifier.SendAsync(student.Id, UserType.Student,
-                "🎓 ألف مبروك! لقد تخرجت!",
-                $"تهانينا على تخرجك من المدرسة للعام الدراسي {GetCurrentAcademicYear()}-{GetCurrentAcademicYear() + 1}",
-                "graduation"));
-        }
-    }
-
-    // ✅ تنفيذ جميع الإشعارات بشكل متسلسل (لتجنب مشاكل DbContext)
-    foreach (var task in tasks)
-    {
-        await task;
-    }
-}
-
-
-private async Task SendPromotionNotificationsAsync(
-    List<Student> promoted,
-    List<Student> failed,
-    List<Student> graduated)
-{
-    foreach (var student in promoted)
-    {
-        await notifier.SendAsync(student.Id, UserType.Student,
-            "تهانينا! لقد تم ترقيتك",
-            "لقد نجحت وتم ترقيتك إلى الصف التالي",
-            "promotion");
-    }
-
-    foreach (var student in failed)
-    {
-        await notifier.SendAsync(student.Id, UserType.Student,
-            "للأسف، لم تنجح هذا العام",
-            "نتمنى لك التوفيق في العام القادم",
-            "failure");
-    }
-
-    foreach (var student in graduated)
-    {
-        await notifier.SendAsync(student.Id, UserType.Student,
-            "🎓 ألف مبروك! لقد تخرجت!",
-            "تهانينا على تخرجك من المدرسة",
-            "graduation");
-    }
-}
-// ============================================
-// جلب الطلاب الذين لم تدخل علاماتهم النهائية
-// ============================================
-
-[HttpGet("students-missing-final-exam")]
-public async Task<IActionResult> GetStudentsMissingFinalExam(
-    [FromQuery] int localGradeNumber,
-    [FromQuery] int semester = 2)
-{
-    try
-    {
-        var currentYear = DateTime.Now.Year;
-
-        // ✅ البحث عن الصف
-        var grade = await db.Grades
-            .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
-                                      g.LocalGradeNumber == localGradeNumber 
-                                     );
-
-        if (grade is null)
-        {
-            return NotFound(new
-            {
-                success = false,
-                message = $"لا يوجد صف برقم {localGradeNumber} للعام {currentYear}"
-            });
-        }
-
-        // ✅ جلب جميع الطلاب في الصف
-        var students = await db.Students
-            .Include(s => s.Section)
-            .Where(s => s.SchoolId == SchoolId && 
-                        s.Section != null &&
-                        s.Section.GradeId == grade.Id &&
-                        s.IsActive)
-            .ToListAsync();
-
-        if (!students.Any())
-        {
-            return Ok(new
-            {
-                success = true,
-                message = "لا يوجد طلاب في هذا الصف",
-                data = new
-                {
-                    TotalStudents = 0,
-                    StudentsWithMissingMarks = 0,
-                    Students = new List<object>()
-                }
-            });
-        }
-
-        var result = new List<object>();
-
-        foreach (var student in students)
-        {
-            // ✅ جلب المواد التي يدرسها الطالب
-            var studentSubjects = await db.TeacherGrades
-                .Where(tg => tg.SectionId == student.SectionId)
-                .Select(tg => tg.SubjectId)
-                .Distinct()
-                .ToListAsync();
-
-            var missingSubjects = new List<string>();
-
-            foreach (var subjectId in studentSubjects)
-            {
-                // ✅ التحقق من وجود FinalExam
-                var hasFinalExam = await db.Marks
-                    .AnyAsync(m => m.StudentId == student.Id && 
-                                  m.SubjectId == subjectId && 
-                                  m.Semester == semester &&
-                                  m.FinalExam > 0);
-
-                if (!hasFinalExam)
-                {
-                    var subjectName = await db.Subjects
-                        .Where(s => s.Id == subjectId)
-                        .Select(s => s.Name)
-                        .FirstOrDefaultAsync() ?? "غير معروف";
-
-                    missingSubjects.Add(subjectName);
-                }
-            }
-
-            if (missingSubjects.Any())
-            {
-                result.Add(new
-                {
-                    student.Id,
-                    student.Name,
-                    student.LocalStudentNumber,
-                    student.Email,
-                    SectionName = student.Section?.Name,
-                    MissingSubjects = missingSubjects,
-                    MissingCount = missingSubjects.Count
-                });
-            }
-        }
-
-        return Ok(new
-        {
-            success = true,
-            message = result.Any() 
-                ? $"يوجد {result.Count} طالب ناقص علاماتهم النهائية"
-                : "جميع الطلاب لديهم علامات نهائية مكتملة",
-            data = new
-            {
-                GradeName = grade.Name,
-                GradeLevel = grade.Level,
-                LocalGradeNumber = grade.LocalGradeNumber,
-                TotalStudents = students.Count,
-                StudentsWithMissingMarks = result.Count,
-                Students = result
-            }
-        });
-    }
-    catch (Exception ex)
-    {
-        return BadRequest(new { success = false, message = ex.Message });
-    }
-}
-// ============================================
-// جلب الطلاب الراسبين في جميع الصفوف
-// ============================================
-
-[HttpGet("all-failed-students")]
-public async Task<IActionResult> GetAllFailedStudents(
-    [FromQuery] decimal passPercent,
-    [FromQuery] int semester = 2)
-{
-    try
-    {
-        var currentYear = DateTime.Now.Year; // ✅
-
-        var grades = await db.Grades
-            .Where(g => g.SchoolId == SchoolId)
-            .OrderBy(g => g.Level)
-            .ToListAsync();
-
-        var allResults = new List<object>();
-        var totalStudents = 0;
-        var totalFailed = 0;
-        var totalPassed = 0;
-
-        foreach (var grade in grades)
-        {
-            var students = await db.Students
-                .Include(s => s.Section)
-                .Where(s => s.SchoolId == SchoolId && 
-                            s.Section != null &&
-                            s.Section.GradeId == grade.Id &&
-                            s.IsActive)
-                .ToListAsync();
-
-            if (!students.Any()) continue;
-
-            var gradeFailed = new List<object>();
-            var gradePassed = 0;
-
-            foreach (var student in students)
-            {
-                // ✅ استخدام الدالة الجديدة مع AcademicYear
-                var result = await CalculateStudentFinalResultAsync(
-                    student.Id, 
-                    semester, 
-                    SchoolId,
-                    currentYear);
-                
-                var average = result.OverallPercentage;
-                var isPassed = average >= passPercent;
-
-                if (!isPassed)
-                {
-                    gradeFailed.Add(new
+                    result.Add(new
                     {
                         student.Id,
                         student.Name,
                         student.LocalStudentNumber,
                         student.Email,
-                        Average = Math.Round(average, 2)
+                        SectionName = student.Section?.Name,
+                        MissingSubjects = missingSubjects,
+                        MissingCount = missingSubjects.Count
                     });
-                    totalFailed++;
                 }
-                else
-                {
-                    gradePassed++;
-                }
-                totalStudents++;
             }
 
-            totalPassed += gradePassed;
-
-            if (gradeFailed.Any())
+            return Ok(new
             {
-                allResults.Add(new
+                success = true,
+                message = result.Any() 
+                    ? $"يوجد {result.Count} طالب ناقص علاماتهم النهائية"
+                    : "جميع الطلاب لديهم علامات نهائية مكتملة",
+                data = new
                 {
-                    Grade = new
-                    {
-                        grade.Id,
-                        grade.Name,
-                        grade.Level,
-                        grade.LocalGradeNumber
-                    },
+                    GradeName = grade.Name,
+                    GradeLevel = grade.Level,
+                    LocalGradeNumber = grade.LocalGradeNumber,
                     TotalStudents = students.Count,
-                    PassedCount = gradePassed,
-                    FailedCount = gradeFailed.Count,
-                    FailedStudents = gradeFailed
-                });
-            }
+                    StudentsWithMissingMarks = result.Count,
+                    Students = result
+                }
+            });
         }
-
-        return Ok(new
+        catch (Exception ex)
         {
-            success = true,
-            message = "تم جلب جميع الطلاب الراسبين في المدرسة",
-            data = new
-            {
-                PassPercent = passPercent,
-                Semester = semester,
-                AcademicYear = currentYear,
-                Statistics = new
-                {
-                    TotalStudents = totalStudents,
-                    TotalPassed = totalPassed,
-                    TotalFailed = totalFailed,
-                    OverallSuccessRate = totalStudents > 0 ? Math.Round((double)totalPassed / totalStudents * 100, 2) : 0,
-                    OverallFailureRate = totalStudents > 0 ? Math.Round((double)totalFailed / totalStudents * 100, 2) : 0
-                },
-                FailedByGrade = allResults
-            }
-        });
+            return BadRequest(new { success = false, message = ex.Message });
+        }
     }
-    catch (Exception ex)
+
+    // ============================================
+    // جلب الطلاب الراسبين في جميع الصفوف
+    // ============================================
+
+    [HttpGet("all-failed-students")]
+    public async Task<IActionResult> GetAllFailedStudents(
+        [FromQuery] decimal passPercent,
+        [FromQuery] int semester = 2)
     {
-        return BadRequest(new { success = false, message = ex.Message });
+        try
+        {
+            var currentYear = DateTime.Now.Year;
+
+            var grades = await db.Grades
+                .Where(g => g.SchoolId == SchoolId)
+                .OrderBy(g => g.Level)
+                .ToListAsync();
+
+            var allResults = new List<object>();
+            var totalStudents = 0;
+            var totalFailed = 0;
+            var totalPassed = 0;
+
+            foreach (var grade in grades)
+            {
+                var students = await db.Students
+                    .Include(s => s.Section)
+                    .Where(s => s.SchoolId == SchoolId && 
+                                s.Section != null &&
+                                s.Section.GradeId == grade.Id &&
+                                s.IsActive)
+                    .ToListAsync();
+
+                if (!students.Any()) continue;
+
+                var gradeFailed = new List<object>();
+                var gradePassed = 0;
+
+                foreach (var student in students)
+                {
+                    var result = await CalculateStudentFinalResultAsync(
+                        student.Id, 
+                        semester, 
+                        SchoolId,
+                        currentYear);
+                    
+                    var average = result.OverallPercentage;
+                    var isPassed = average >= passPercent;
+
+                    if (!isPassed)
+                    {
+                        gradeFailed.Add(new
+                        {
+                            student.Id,
+                            student.Name,
+                            student.LocalStudentNumber,
+                            student.Email,
+                            Average = Math.Round(average, 2)
+                        });
+                        totalFailed++;
+                    }
+                    else
+                    {
+                        gradePassed++;
+                    }
+                    totalStudents++;
+                }
+
+                totalPassed += gradePassed;
+
+                if (gradeFailed.Any())
+                {
+                    allResults.Add(new
+                    {
+                        Grade = new
+                        {
+                            grade.Id,
+                            grade.Name,
+                            grade.Level,
+                            grade.LocalGradeNumber
+                        },
+                        TotalStudents = students.Count,
+                        PassedCount = gradePassed,
+                        FailedCount = gradeFailed.Count,
+                        FailedStudents = gradeFailed
+                    });
+                }
+            }
+
+            return Ok(new
+            {
+                success = true,
+                message = "تم جلب جميع الطلاب الراسبين في المدرسة",
+                data = new
+                {
+                    PassPercent = passPercent,
+                    Semester = semester,
+                    AcademicYear = currentYear,
+                    Statistics = new
+                    {
+                        TotalStudents = totalStudents,
+                        TotalPassed = totalPassed,
+                        TotalFailed = totalFailed,
+                        OverallSuccessRate = totalStudents > 0 ? Math.Round((double)totalPassed / totalStudents * 100, 2) : 0,
+                        OverallFailureRate = totalStudents > 0 ? Math.Round((double)totalFailed / totalStudents * 100, 2) : 0
+                    },
+                    FailedByGrade = allResults
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { success = false, message = ex.Message });
+        }
     }
-}
 
     // ============================================
     // دوال مساعدة لحفظ وحذف الصور
     // ============================================
 
     private async Task<string> SaveScheduleImageAsync(IFormFile image)
-{
-    var uploadsFolder = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "schedules");
-    
-    if (!Directory.Exists(uploadsFolder))
-        Directory.CreateDirectory(uploadsFolder);
-
-    // ✅ تنظيف اسم الملف من المسافات والأحرف الخاصة
-    var fileName = Path.GetFileNameWithoutExtension(image.FileName);
-    var extension = Path.GetExtension(image.FileName);
-    
-    // استبدال المسافات بشرطة سفلية وإزالة الأحرف غير المسموحة
-    var cleanFileName = fileName
-        .Replace(" ", "_")
-        .Replace("(", "")
-        .Replace(")", "")
-        .Replace("[", "")
-        .Replace("]", "")
-        .Replace("&", "")
-        .Replace("%", "")
-        .Replace("#", "");
-    
-    var uniqueFileName = $"{Guid.NewGuid()}_{cleanFileName}{extension}";
-    var filePath = Path.Combine(uploadsFolder, uniqueFileName);
-
-    using (var fileStream = new FileStream(filePath, FileMode.Create))
     {
-        await image.CopyToAsync(fileStream);
-    }
+        var uploadsFolder = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "schedules");
+        
+        if (!Directory.Exists(uploadsFolder))
+            Directory.CreateDirectory(uploadsFolder);
 
-    return $"/uploads/schedules/{uniqueFileName}";
-}
+        var fileName = Path.GetFileNameWithoutExtension(image.FileName);
+        var extension = Path.GetExtension(image.FileName);
+        
+        var cleanFileName = fileName
+            .Replace(" ", "_")
+            .Replace("(", "")
+            .Replace(")", "")
+            .Replace("[", "")
+            .Replace("]", "")
+            .Replace("&", "")
+            .Replace("%", "")
+            .Replace("#", "");
+        
+        var uniqueFileName = $"{Guid.NewGuid()}_{cleanFileName}{extension}";
+        var filePath = Path.Combine(uploadsFolder, uniqueFileName);
+
+        using (var fileStream = new FileStream(filePath, FileMode.Create))
+        {
+            await image.CopyToAsync(fileStream);
+        }
+
+        return $"/uploads/schedules/{uniqueFileName}";
+    }
 
     private bool DeleteScheduleImageFile(string imageUrl)
-{
-    if (string.IsNullOrEmpty(imageUrl))
-        return false;
-
-    try
     {
-        var fileName = Path.GetFileName(imageUrl);
-        var filePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "schedules", fileName);
+        if (string.IsNullOrEmpty(imageUrl))
+            return false;
 
-        if (System.IO.File.Exists(filePath))
+        try
         {
-            System.IO.File.Delete(filePath);
-            return true;
+            var fileName = Path.GetFileName(imageUrl);
+            var filePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "schedules", fileName);
+
+            if (System.IO.File.Exists(filePath))
+            {
+                System.IO.File.Delete(filePath);
+                return true;
+            }
+            
+            return false;
         }
-        
-        return false; // الملف غير موجود
-    }
-    catch (Exception ex)
-    {
-        // تسجيل الخطأ
-        Console.WriteLine($"خطأ في حذف الملف: {ex.Message}");
-        return false;
-    }
-}
-private async Task<StudentFinalResult> CalculateStudentFinalResultAsync(
-    int studentId,
-    int semester,
-    int schoolId,
-    int academicYear) // ✅ إضافة السنة الدراسية
-{
-    var student = await db.Students
-        .Include(s => s.Section)
-        .FirstOrDefaultAsync(s => s.Id == studentId);
-
-    // ✅ حالة الطالب غير موجود
-    if (student == null)
-    {
-        return new StudentFinalResult
+        catch (Exception ex)
         {
-            StudentId = studentId,
-            StudentName = "طالب غير موجود",
-            LocalStudentNumber = 0,
-            IsComplete = false,
-            MissingSubjects = new List<string> { "الطالب غير موجود" }
-        };
+            Console.WriteLine($"خطأ في حذف الملف: {ex.Message}");
+            return false;
+        }
     }
 
-    // ✅ حالة الطالب ليس في أي شعبة
-    if (student.SectionId == null)
+    private async Task<StudentFinalResult> CalculateStudentFinalResultAsync(
+        int studentId,
+        int semester,
+        int schoolId,
+        int academicYear)
     {
+        var student = await db.Students
+            .Include(s => s.Section)
+            .FirstOrDefaultAsync(s => s.Id == studentId);
+
+        if (student == null)
+        {
+            return new StudentFinalResult
+            {
+                StudentId = studentId,
+                StudentName = "طالب غير موجود",
+                LocalStudentNumber = 0,
+                IsComplete = false,
+                MissingSubjects = new List<string> { "الطالب غير موجود" }
+            };
+        }
+
+        if (student.SectionId == null)
+        {
+            return new StudentFinalResult
+            {
+                StudentId = studentId,
+                StudentName = student.Name,
+                LocalStudentNumber = student.LocalStudentNumber,
+                IsComplete = false,
+                MissingSubjects = new List<string> { "الطالب ليس في أي شعبة" }
+            };
+        }
+
+        var subjectIds = await db.TeacherGrades
+            .Where(tg => tg.SectionId == student.SectionId)
+            .Select(tg => tg.SubjectId)
+            .Distinct()
+            .ToListAsync();
+
+        if (!subjectIds.Any())
+        {
+            return new StudentFinalResult
+            {
+                StudentId = studentId,
+                StudentName = student.Name,
+                LocalStudentNumber = student.LocalStudentNumber,
+                IsComplete = false,
+                MissingSubjects = new List<string> { "لا توجد مواد في هذه الشعبة" }
+            };
+        }
+
+        var marks = await db.Marks
+            .Where(m => m.StudentId == studentId &&
+                        m.Semester == semester &&
+                        m.AcademicYear == academicYear &&
+                        subjectIds.Contains(m.SubjectId))
+            .ToDictionaryAsync(m => m.SubjectId);
+
+        decimal totalStudentScore = 0;
+        decimal totalMaxScore = 0;
+        var subjectResults = new List<SubjectResult>();
+        var missingSubjects = new List<string>();
+
+        foreach (var subjectId in subjectIds)
+        {
+            var subject = await db.Subjects.FindAsync(subjectId);
+            var subjectName = subject?.Name ?? "غير معروف";
+
+            if (marks.TryGetValue(subjectId, out var mark))
+            {
+                var studentTotal = mark.Oral + mark.Quiz1 + mark.Quiz2 + 
+                                   mark.Homework + mark.FinalExam;
+
+                var maxTotal = mark.MaxOral + mark.MaxQuiz1 + mark.MaxQuiz2 + 
+                               mark.MaxHomework + mark.MaxFinalExam;
+
+                var hasFinalExam = mark.FinalExam > 0;
+
+                if (!hasFinalExam)
+                {
+                    missingSubjects.Add($"{subjectName} (العلامة النهائية غير مدخلة)");
+                    continue;
+                }
+
+                if (maxTotal == 0)
+                {
+                    missingSubjects.Add($"{subjectName} (العلامات الكاملة غير محددة)");
+                    continue;
+                }
+
+                totalStudentScore += studentTotal;
+                totalMaxScore += maxTotal;
+
+                subjectResults.Add(new SubjectResult
+                {
+                    SubjectId = subjectId,
+                    SubjectName = subjectName,
+                    StudentScore = studentTotal,
+                    MaxScore = maxTotal,
+                    Percentage = Math.Round((decimal)studentTotal / maxTotal * 100, 2)
+                });
+            }
+            else
+            {
+                missingSubjects.Add($"{subjectName} (لا توجد علامات)");
+            }
+        }
+
+        var isComplete = missingSubjects.Count == 0 && subjectResults.Count == subjectIds.Count;
+
+        decimal overallPercentage = 0;
+        if (totalMaxScore > 0)
+        {
+            overallPercentage = Math.Round((totalStudentScore / totalMaxScore) * 100, 2);
+        }
+
         return new StudentFinalResult
         {
             StudentId = studentId,
             StudentName = student.Name,
             LocalStudentNumber = student.LocalStudentNumber,
-            IsComplete = false,
-            MissingSubjects = new List<string> { "الطالب ليس في أي شعبة" }
+            IsComplete = isComplete,
+            TotalStudentScore = totalStudentScore,
+            TotalMaxScore = totalMaxScore,
+            OverallPercentage = overallPercentage,
+            SubjectResults = subjectResults,
+            MissingSubjects = missingSubjects,
+            SubjectCount = subjectIds.Count,
+            CompletedSubjects = subjectResults.Count,
+            AcademicYear = academicYear
         };
     }
 
-    // ✅ 1. جلب جميع المواد في الشعبة
-    var subjectIds = await db.TeacherGrades
-        .Where(tg => tg.SectionId == student.SectionId)
-        .Select(tg => tg.SubjectId)
-        .Distinct()
-        .ToListAsync();
+    // ============================================
+    // كلاسات مساعدة
+    // ============================================
 
-    // ✅ حالة لا توجد مواد في الشعبة
-    if (!subjectIds.Any())
+    public class StudentFinalResult
     {
-        return new StudentFinalResult
-        {
-            StudentId = studentId,
-            StudentName = student.Name,
-            LocalStudentNumber = student.LocalStudentNumber,
-            IsComplete = false,
-            MissingSubjects = new List<string> { "لا توجد مواد في هذه الشعبة" }
-        };
+        public int StudentId { get; set; }
+        public string StudentName { get; set; }
+        public int LocalStudentNumber { get; set; }
+        public bool IsComplete { get; set; }
+        public decimal TotalStudentScore { get; set; }
+        public decimal TotalMaxScore { get; set; }
+        public decimal OverallPercentage { get; set; }
+        public List<SubjectResult> SubjectResults { get; set; } = new();
+        public List<string> MissingSubjects { get; set; } = new();
+        public int SubjectCount { get; set; }
+        public int CompletedSubjects { get; set; }
+        public int AcademicYear { get; set; }
     }
 
-    // ✅ 2. جلب العلامات للفصل والسنة المحددين
-    var marks = await db.Marks
-        .Where(m => m.StudentId == studentId &&
-                    m.Semester == semester &&
-                    m.AcademicYear == academicYear && // ✅ شرط السنة
-                    subjectIds.Contains(m.SubjectId))
-        .ToDictionaryAsync(m => m.SubjectId);
-
-    // ✅ 3. حساب المجاميع
-    decimal totalStudentScore = 0;
-    decimal totalMaxScore = 0;
-    var subjectResults = new List<SubjectResult>();
-    var missingSubjects = new List<string>();
-
-    foreach (var subjectId in subjectIds)
+    public class SubjectResult
     {
-        var subject = await db.Subjects.FindAsync(subjectId);
-        var subjectName = subject?.Name ?? "غير معروف";
+        public int SubjectId { get; set; }
+        public string SubjectName { get; set; }
+        public decimal StudentScore { get; set; }
+        public decimal MaxScore { get; set; }
+        public decimal Percentage { get; set; }
+    }
 
-        if (marks.TryGetValue(subjectId, out var mark))
+    private async Task<GradePromotionResult> ProcessGradePromotionAsync(
+        Grade grade,
+        List<Student> students,
+        int currentYear,
+        int nextYear,
+        int semester,
+        decimal passPercent)
+    {
+        var nextLevel = grade.Level + 1;
+        var nextGrade = await db.Grades
+            .FirstOrDefaultAsync(g => g.SchoolId == SchoolId && 
+                                      g.Level == nextLevel);
+
+        var promotedStudents = new List<Student>();
+        var failedStudents = new List<Student>();
+        var graduatedStudents = new List<Student>();
+        var historyEntries = new List<StudentGradeHistory>();
+
+        foreach (var student in students)
         {
-            // ✅ حساب مجموع الطالب
-            var studentTotal = mark.Oral + mark.Quiz1 + mark.Quiz2 + 
-                               mark.Homework + mark.FinalExam;
+            var average = await GetStudentFinalAverageAsync(student.Id);
+            var passed = average >= passPercent;
 
-            // ✅ حساب العلامة الكاملة للمادة
-            var maxTotal = mark.MaxOral + mark.MaxQuiz1 + mark.MaxQuiz2 + 
-                           mark.MaxHomework + mark.MaxFinalExam;
-
-            // ✅ التحقق من اكتمال العلامات (FinalExam شرط أساسي)
-            var hasFinalExam = mark.FinalExam > 0;
-
-            if (!hasFinalExam)
+            historyEntries.Add(new StudentGradeHistory
             {
-                missingSubjects.Add($"{subjectName} (العلامة النهائية غير مدخلة)");
-                continue;
-            }
-
-            if (maxTotal == 0)
-            {
-                missingSubjects.Add($"{subjectName} (العلامات الكاملة غير محددة)");
-                continue;
-            }
-
-            totalStudentScore += studentTotal;
-            totalMaxScore += maxTotal;
-
-            subjectResults.Add(new SubjectResult
-            {
-                SubjectId = subjectId,
-                SubjectName = subjectName,
-                StudentScore = studentTotal,
-                MaxScore = maxTotal,
-                Percentage = Math.Round((decimal)studentTotal / maxTotal * 100, 2)
+                StudentId = student.Id,
+                GradeId = grade.Id,
+                SectionId = student.SectionId ?? 0,
+                AcademicYear = currentYear,
+                Semester = semester,
+                IsPassed = passed,
+                Average = average,
+                CreatedAt = DateTime.UtcNow
             });
+
+            if (passed)
+            {
+                if (grade.Level >= 12)
+                {
+                    student.IsActive = false;
+                    graduatedStudents.Add(student);
+                }
+                else if (nextGrade is not null)
+                {
+                    var nextSection = await GetOrCreateSectionAsync(SchoolId, nextGrade.Id);
+                    student.SectionId = nextSection.Id;
+                    promotedStudents.Add(student);
+                }
+                else
+                {
+                    failedStudents.Add(student);
+                }
+            }
+            else
+            {
+                failedStudents.Add(student);
+            }
+        }
+
+        if (historyEntries.Any())
+            db.StudentGradeHistory.AddRange(historyEntries);
+
+        return new GradePromotionResult
+        {
+            GradeName = grade.Name,
+            Level = grade.Level,
+            LocalGradeNumber = grade.LocalGradeNumber,
+            TotalStudents = students.Count,
+            PromotedCount = promotedStudents.Count,
+            FailedCount = failedStudents.Count,
+            GraduatedCount = graduatedStudents.Count,
+            PromotedStudents = promotedStudents.Select(s => new StudentBasicInfo { Id = s.Id, Name = s.Name, LocalStudentNumber = s.LocalStudentNumber }).ToList(),
+            FailedStudents = failedStudents.Select(s => new StudentBasicInfo { Id = s.Id, Name = s.Name, LocalStudentNumber = s.LocalStudentNumber }).ToList(),
+            GraduatedStudents = graduatedStudents.Select(s => new StudentBasicInfo { Id = s.Id, Name = s.Name, LocalStudentNumber = s.LocalStudentNumber }).ToList(),
+            Status = "Processed",
+            Message = "تمت المعالجة بنجاح"
+        };
+    }
+
+    private async Task<decimal> GetStudentFinalAverageAsync(int studentId)
+    {
+        var marks = await db.Marks
+            .Where(m => m.StudentId == studentId)
+            .ToListAsync();
+
+        return marks.Any() ? marks.Average(m => m.Total) : 0;
+    }
+
+    private async Task<Section> GetOrCreateSectionAsync(int schoolId, int gradeId)
+    {
+        var section = await db.Sections
+            .FirstOrDefaultAsync(s => s.GradeId == gradeId);
+
+        if (section is null)
+        {
+            var usedNumbers = await db.Sections
+                .Where(s => s.GradeId == gradeId)
+                .Select(s => s.LocalSectionNumber)
+                .ToListAsync();
+
+            int newLocalNumber = 1;
+            while (usedNumbers.Contains(newLocalNumber)) newLocalNumber++;
+
+            section = new Section
+            {
+                Name = $"الشعبة {GetSectionLetter(newLocalNumber)}",
+                GradeId = gradeId,
+                SchoolId = schoolId,
+                LocalSectionNumber = newLocalNumber,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            db.Sections.Add(section);
+            await db.SaveChangesAsync();
+        }
+
+        return section;
+    }
+
+    private string GetSectionLetter(int number) => number switch
+    {
+        1 => "أ",
+        2 => "ب",
+        3 => "ج",
+        4 => "د",
+        5 => "ه",
+        6 => "و",
+        7 => "ز",
+        8 => "ح",
+        9 => "ط",
+        10 => "ي",
+        _ => number.ToString()
+    };
+
+    private int GetCurrentAcademicYear()
+    {
+        var now = DateTime.Now;
+        var currentYear = now.Year;
+        var currentMonth = now.Month;
+        
+        if (currentMonth >= 9 && currentMonth <= 12)
+        {
+            return currentYear;
         }
         else
         {
-            // ❌ مادة بدون أي علامات
-            missingSubjects.Add($"{subjectName} (لا توجد علامات)");
+            return currentYear - 1;
         }
     }
 
-    // ✅ 4. التحقق من اكتمال جميع المواد
-    var isComplete = missingSubjects.Count == 0 && subjectResults.Count == subjectIds.Count;
-
-    // ✅ 5. حساب النسبة المئوية الإجمالية
-    decimal overallPercentage = 0;
-    if (totalMaxScore > 0)
+    private int GetNextAcademicYear(int currentAcademicYear)
     {
-        overallPercentage = Math.Round((totalStudentScore / totalMaxScore) * 100, 2);
+        return currentAcademicYear + 1;
     }
 
-    // ✅ 6. إرجاع النتيجة
-    return new StudentFinalResult
+    private async Task SendBulkPromotionNotificationsAsync(List<GradePromotionResult> results)
     {
-        StudentId = studentId,
-        StudentName = student.Name,
-        LocalStudentNumber = student.LocalStudentNumber,
-        IsComplete = isComplete,
-        TotalStudentScore = totalStudentScore,
-        TotalMaxScore = totalMaxScore,
-        OverallPercentage = overallPercentage,
-        SubjectResults = subjectResults,
-        MissingSubjects = missingSubjects,
-        SubjectCount = subjectIds.Count,
-        CompletedSubjects = subjectResults.Count,
-        AcademicYear = academicYear // ✅ إضافة السنة للنتيجة
-    };
-}
+        var tasks = new List<Task>();
 
-// ✅ كلاسات مساعدة
-public class StudentFinalResult
-{
-    public int StudentId { get; set; }
-    public string StudentName { get; set; }
-    public int LocalStudentNumber { get; set; }
-    public bool IsComplete { get; set; }
-    public decimal TotalStudentScore { get; set; }
-    public decimal TotalMaxScore { get; set; }
-    public decimal OverallPercentage { get; set; }
-    public List<SubjectResult> SubjectResults { get; set; } = new();
-    public List<string> MissingSubjects { get; set; } = new();
-    public int SubjectCount { get; set; }
-    public int CompletedSubjects { get; set; }
-    public int AcademicYear { get; set; }
-}
+        foreach (var gradeResult in results)
+        {
+            foreach (var student in gradeResult.PromotedStudents)
+            {
+                tasks.Add(notifier.SendAsync(student.Id, UserType.Student,
+                    "تهانينا! لقد تم ترقيتك",
+                    $"لقد نجحت وتم ترقيتك من {gradeResult.GradeName} إلى الصف التالي",
+                    "promotion"));
+            }
 
-public class SubjectResult
-{
-    public int SubjectId { get; set; }
-    public string SubjectName { get; set; }
-    public decimal StudentScore { get; set; }
-    public decimal MaxScore { get; set; }
-    public decimal Percentage { get; set; }
-}
-private int CalculateAge(DateTime birthDate)
-{
-    var today = DateTime.Today;
-    var age = today.Year - birthDate.Year;
-    
-    // إذا لم يحن عيد الميلاد بعد هذا العام، اطرح 1
-    if (birthDate.Date > today.AddYears(-age))
-        age--;
-    
-    return age;
-}
+            foreach (var student in gradeResult.FailedStudents)
+            {
+                tasks.Add(notifier.SendAsync(student.Id, UserType.Student,
+                    "للأسف، لم تنجح هذا العام",
+                    $"لم تنجح في {gradeResult.GradeName}. نتمنى لك التوفيق في العام القادم",
+                    "failure"));
+            }
+
+            foreach (var student in gradeResult.GraduatedStudents)
+            {
+                tasks.Add(notifier.SendAsync(student.Id, UserType.Student,
+                    "🎓 ألف مبروك! لقد تخرجت!",
+                    $"تهانينا على تخرجك من المدرسة للعام الدراسي {GetCurrentAcademicYear()}-{GetCurrentAcademicYear() + 1}",
+                    "graduation"));
+            }
+        }
+
+        foreach (var task in tasks)
+        {
+            await task;
+        }
+    }
+
+    private async Task SendPromotionNotificationsAsync(
+        List<Student> promoted,
+        List<Student> failed,
+        List<Student> graduated)
+    {
+        foreach (var student in promoted)
+        {
+            await notifier.SendAsync(student.Id, UserType.Student,
+                "تهانينا! لقد تم ترقيتك",
+                "لقد نجحت وتم ترقيتك إلى الصف التالي",
+                "promotion");
+        }
+
+        foreach (var student in failed)
+        {
+            await notifier.SendAsync(student.Id, UserType.Student,
+                "للأسف، لم تنجح هذا العام",
+                "نتمنى لك التوفيق في العام القادم",
+                "failure");
+        }
+
+        foreach (var student in graduated)
+        {
+            await notifier.SendAsync(student.Id, UserType.Student,
+                "🎓 ألف مبروك! لقد تخرجت!",
+                "تهانينا على تخرجك من المدرسة",
+                "graduation");
+        }
+    }
+
+    private int CalculateAge(DateTime birthDate)
+    {
+        var today = DateTime.Today;
+        var age = today.Year - birthDate.Year;
+        
+        if (birthDate.Date > today.AddYears(-age))
+            age--;
+        
+        return age;
+    }
 }

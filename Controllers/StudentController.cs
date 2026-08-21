@@ -1189,7 +1189,7 @@ public class StudentController(AppDbContext db, NotificationService notifier) : 
             .Select(r => new
             {
                 ActivityName = r.Activity != null ? r.Activity.Title : "غير معروف",
-                LocalActivityId = r.Activity != null ? r.Activity.LocalActivityId : 0,
+                ActivityId = r.Activity != null ? r.Activity.Id : 0,
                 Status = r.Status.ToString(),
                 StatusArabic = r.Status == RegistrationStatus.Pending ? "قيد الانتظار" :
                               r.Status == RegistrationStatus.Approved ? "مقبول" :

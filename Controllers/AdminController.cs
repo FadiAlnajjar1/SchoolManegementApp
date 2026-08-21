@@ -349,26 +349,25 @@ public async Task<IActionResult> CreateEmployee(EmployeeCreateRequest request)
     if (school is null)
         return BadRequest(new { message = "المدرسة غير موجودة" });
 
-    // ✅ 2. التحقق من العمر (يجب أن يكون أكبر من 18 سنة)
-    if (request.BirthDate.HasValue)
-    {
-        var age = CalculateAge(request.BirthDate.Value);
-        if (age < 18)
-            return BadRequest(new { message = "عمر الموظف يجب أن يكون 18 سنة على الأقل" });
-    }
-    else
-    {
+    // 2. التحقق من العمر
+    if (!request.BirthDate.HasValue)
         return BadRequest(new { message = "تاريخ الميلاد مطلوب" });
-    }
 
-    // 3. التحقق من عدم وجود موظف بنفس الرقم الوطني
+    var age = CalculateAge(request.BirthDate.Value);
+    if (age < 18)
+        return BadRequest(new { message = "عمر الموظف يجب أن يكون 18 سنة على الأقل" });
+
+    // 3. التحقق من الرقم الوطني
+    if (string.IsNullOrWhiteSpace(request.NationalId))
+        return BadRequest(new { message = "الرقم الوطني مطلوب" });
+
+    // 4. البحث عن موظف بنفس الرقم الوطني
     var existingEmployee = await db.Employees
         .FirstOrDefaultAsync(e => e.NationalId == request.NationalId);
 
     Employee? employee;
     bool isNewEmployee = false;
 
-    // 4. إذا كان الموظف موجوداً بالفعل
     if (existingEmployee is not null)
     {
         employee = existingEmployee;
@@ -376,10 +375,59 @@ public async Task<IActionResult> CreateEmployee(EmployeeCreateRequest request)
         // التحقق من أنه ليس مفصولاً
         if (employee.IsDismissed)
             return BadRequest(new { message = "هذا الموظف مفصول ولا يمكن إضافته" });
+
+        // ✅ 5. التحقق من البريد الإلكتروني (إذا كان موجوداً ومختلفاً)
+        if (!string.IsNullOrWhiteSpace(request.Email) && request.Email != employee.Email)
+        {
+            // البحث عن موظف آخر بنفس البريد الإلكتروني
+            var existingEmail = await db.Employees
+                .FirstOrDefaultAsync(e => e.Email == request.Email && e.Id != employee.Id);
+
+            if (existingEmail is not null)
+            {
+                // إذا كان الرقم الوطني مختلفاً → يمنع
+                // إذا كان الرقم الوطني هو نفسه → يسمح (وهذا لن يحدث لأننا نبحث عن e.Id != employee.Id)
+                return BadRequest(new { 
+                    message = "البريد الإلكتروني مستخدم بالفعل من قبل موظف آخر" 
+                });
+            }
+
+            // تحديث البريد الإلكتروني
+            employee.Email = request.Email;
+        }
+
+        // تحديث باقي البيانات
+        employee.Name = request.Name;
+        employee.Phone = request.Phone ?? employee.Phone;
+        employee.Address = request.Address ?? employee.Address;
+        employee.BirthDate = request.BirthDate;
+        employee.Qualification = request.Qualification ?? employee.Qualification;
+        employee.Photo = request.Photo ?? employee.Photo;
+
+        if (!string.IsNullOrWhiteSpace(request.Password))
+            employee.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
     }
     else
     {
-        // 5. إنشاء موظف جديد
+        // ✅ 6. التحقق من البريد الإلكتروني للموظف الجديد
+        if (!string.IsNullOrWhiteSpace(request.Email))
+        {
+            var existingEmail = await db.Employees
+                .FirstOrDefaultAsync(e => e.Email == request.Email);
+
+            if (existingEmail is not null)
+            {
+                return BadRequest(new { 
+                    message = "البريد الإلكتروني مستخدم بالفعل من قبل موظف آخر" 
+                });
+            }
+        }
+        else
+        {
+            return BadRequest(new { message = "البريد الإلكتروني مطلوب" });
+        }
+
+        // 7. إنشاء موظف جديد
         employee = new Employee
         {
             Name = request.Name,
@@ -399,7 +447,7 @@ public async Task<IActionResult> CreateEmployee(EmployeeCreateRequest request)
         await db.SaveChangesAsync();
     }
 
-    // 6. التحقق من الأدوار الفريدة (على مستوى المدرسة)
+    // 8. التحقق من الأدوار الفريدة
     if (IsUniqueRole(request.Role))
     {
         var existingInSchool = await db.EmployeeSchools
@@ -411,7 +459,7 @@ public async Task<IActionResult> CreateEmployee(EmployeeCreateRequest request)
             return BadRequest(new { message = $"الوظيفة '{GetRoleName(request.Role)}' مشغولة بالفعل في هذه المدرسة" });
     }
 
-    // 7. التحقق من عدم وجود نفس الموظف في نفس المدرسة
+    // 9. التحقق من وجود الموظف في نفس المدرسة
     var existingInSameSchool = await db.EmployeeSchools
         .AnyAsync(es => es.EmployeeId == employee.Id &&
                        es.SchoolId == request.SchoolId &&
@@ -420,7 +468,7 @@ public async Task<IActionResult> CreateEmployee(EmployeeCreateRequest request)
     if (existingInSameSchool)
         return BadRequest(new { message = "هذا الموظف موجود بالفعل في هذه المدرسة" });
 
-    // 8. حساب الرقم المحلي الجديد (أول رقم غير مستخدم)
+    // 10. حساب الرقم المحلي الجديد
     var usedNumbers = await db.EmployeeSchools
         .Where(es => es.SchoolId == request.SchoolId)
         .Select(es => es.LocalEmployeeNumber)
@@ -432,7 +480,7 @@ public async Task<IActionResult> CreateEmployee(EmployeeCreateRequest request)
         newLocalNumber++;
     }
 
-    // 9. إضافة الموظف إلى المدرسة
+    // 11. إضافة الموظف إلى المدرسة
     var employeeSchool = new EmployeeSchool
     {
         EmployeeId = employee.Id,
@@ -445,7 +493,7 @@ public async Task<IActionResult> CreateEmployee(EmployeeCreateRequest request)
 
     db.EmployeeSchools.Add(employeeSchool);
 
-    // 10. إذا كان معلم، أضف TeacherAssignment للمدرسة الجديدة فقط
+    // 12. إذا كان معلم، أضف TeacherAssignment
     if (request.Role == EmployeeRole.Teacher)
     {
         db.TeacherAssignments.Add(new TeacherAssignment
@@ -471,7 +519,7 @@ public async Task<IActionResult> CreateEmployee(EmployeeCreateRequest request)
             employee.BirthDate,
             employee.Qualification,
             employee.CreatedAt,
-            Age = request.BirthDate.HasValue ? CalculateAge(request.BirthDate.Value) : 0, // ✅ إضافة العمر في الـ Response
+            Age = CalculateAge(request.BirthDate.Value),
             school = new
             {
                 school.Id,
@@ -910,14 +958,25 @@ public async Task<IActionResult> UpdateEmployeeByLocalNumber(
     if (employee is null)
         return NotFound(new { message = "الموظف غير موجود" });
 
-    // 2. التحقق من عدم تكرار البريد الإلكتروني
+    // 2. التحقق من البريد الإلكتروني
     if (!string.IsNullOrWhiteSpace(request.Email) && request.Email != employee.Email)
     {
-        var existingEmail = await db.Employees
-            .AnyAsync(e => e.Email == request.Email && e.Id != employee.Id);
+        // 🔥 البحث عن موظف بنفس البريد الإلكتروني
+        var existingEmployeeWithEmail = await db.Employees
+            .FirstOrDefaultAsync(e => e.Email == request.Email && e.Id != employee.Id);
 
-        if (existingEmail)
-            return BadRequest(new { message = "البريد الإلكتروني مستخدم بالفعل" });
+        if (existingEmployeeWithEmail is not null)
+        {
+            // ✅ التحقق: إذا كان الرقم الوطني هو نفسه، يسمح بتكرار البريد
+            // إذا كان الرقم الوطني مختلفاً، يمنع
+            if (existingEmployeeWithEmail.NationalId != employee.NationalId)
+            {
+                return BadRequest(new { 
+                    message = "البريد الإلكتروني مستخدم بالفعل من قبل موظف آخر برقم وطني مختلف" 
+                });
+            }
+            // إذا كان الرقم الوطني هو نفسه، نسمح بتحديث البريد (نفس البريد أو تحديثه)
+        }
 
         employee.Email = request.Email;
     }
@@ -1379,7 +1438,9 @@ public async Task<IActionResult> TransferStudent([FromBody] TransferStudentByIdR
 [HttpPatch("transfer/employee")]
 public async Task<IActionResult> TransferEmployee(TransferEmployeeLocalRequest request)
 {
-    // ✅ البحث عن الموظف في المدرسة القديمة
+    // ============================================
+    // ✅ 1. جلب بيانات الموظف من المدرسة القديمة
+    // ============================================
     var oldEmployeeSchool = await db.EmployeeSchools
         .Include(es => es.Employee)
         .Include(es => es.School)
@@ -1388,8 +1449,8 @@ public async Task<IActionResult> TransferEmployee(TransferEmployeeLocalRequest r
                                   es.IsActive);
 
     if (oldEmployeeSchool is null)
-        return NotFound(new { 
-            message = $"لا يوجد موظف برقم {request.LocalEmployeeNumber} في المدرسة رقم {request.CurrentSchoolId}" 
+        return NotFound(new {
+            message = $"لا يوجد موظف برقم {request.LocalEmployeeNumber} في المدرسة رقم {request.CurrentSchoolId}"
         });
 
     var employee = oldEmployeeSchool.Employee;
@@ -1400,7 +1461,6 @@ public async Task<IActionResult> TransferEmployee(TransferEmployeeLocalRequest r
     var currentSchoolName = oldEmployeeSchool.School?.Name ?? "غير معروف";
     var currentRole = oldEmployeeSchool.Role;
     var currentRoleName = GetRoleName(currentRole);
-    var currentLocalNumber = oldEmployeeSchool.LocalEmployeeNumber;
 
     var targetSchool = await db.Schools.FindAsync(request.NewSchoolId);
     if (targetSchool is null)
@@ -1412,15 +1472,7 @@ public async Task<IActionResult> TransferEmployee(TransferEmployeeLocalRequest r
     if (!Enum.IsDefined(typeof(EmployeeRole), request.NewRole))
         return BadRequest(new { message = "الوظيفة غير صالحة" });
 
-    // ✅ 1. التحقق من وجود الموظف في المدرسة الجديدة (يشمل السجلات غير النشطة)
-    var existingInNewSchool = await db.EmployeeSchools
-        .FirstOrDefaultAsync(es => es.EmployeeId == employee.Id &&
-                                  es.SchoolId == request.NewSchoolId);
-
-    if (existingInNewSchool != null && existingInNewSchool.IsActive)
-        return BadRequest(new { message = "الموظف موجود بالفعل في المدرسة الجديدة" });
-
-    // ✅ 2. التحقق من الأدوار الفريدة في المدرسة الجديدة
+    // ✅ التحقق من الأدوار الفريدة في المدرسة الجديدة
     if (IsUniqueRole(request.NewRole))
     {
         var existingRole = await db.EmployeeSchools
@@ -1433,7 +1485,23 @@ public async Task<IActionResult> TransferEmployee(TransferEmployeeLocalRequest r
             return BadRequest(new { message = $"الوظيفة '{GetRoleName(request.NewRole)}' مشغولة بالفعل في المدرسة الجديدة" });
     }
 
-    // ✅ 3. حساب رقم محلي جديد (أول رقم غير مستخدم)
+    // ✅ التحقق من أن الموظف ليس مدير المدرسة الحالية
+    if (currentRole == EmployeeRole.Principal)
+        return BadRequest(new { message = "لا يمكن نقل مدير المدرسة" });
+
+    // ============================================
+    // ✅ 2. التحقق من وجود الموظف في المدرسة الجديدة
+    // ============================================
+    var existingInNewSchool = await db.EmployeeSchools
+        .FirstOrDefaultAsync(es => es.EmployeeId == employee.Id &&
+                                  es.SchoolId == request.NewSchoolId);
+
+    if (existingInNewSchool != null && existingInNewSchool.IsActive)
+        return BadRequest(new { message = "الموظف موجود بالفعل في المدرسة الجديدة" });
+
+    // ============================================
+    // ✅ 3. حساب رقم محلي جديد
+    // ============================================
     var usedNumbers = await db.EmployeeSchools
         .Where(es => es.SchoolId == request.NewSchoolId)
         .Select(es => es.LocalEmployeeNumber)
@@ -1445,13 +1513,78 @@ public async Task<IActionResult> TransferEmployee(TransferEmployeeLocalRequest r
         newLocalNumber++;
     }
 
-    // ✅ 4. إلغاء تنشيط الربط القديم
+    // ============================================
+    // ✅ 4. حذف الارتباطات من المدرسة الحالية فقط
+    // ============================================
+    
+    // 🔥 4.1 تحديث المواد (Subjects) - فقط في المدرسة الحالية
+    var subjectsToUpdate = await db.Subjects
+        .Where(s => s.TeacherId == employee.Id && s.SchoolId == currentSchoolId)
+        .ToListAsync();
+
+    if (subjectsToUpdate.Any())
+    {
+        foreach (var subject in subjectsToUpdate)
+        {
+            subject.TeacherId = null;
+        }
+        Console.WriteLine($"✅ تم تحديث {subjectsToUpdate.Count} مادة في المدرسة {currentSchoolId}");
+    }
+
+    // 🔥 4.2 حذف الحضور - فقط في المدرسة الحالية
+    // var attendances = await db.EmployeeAttendances
+    //     .Where(a => a.EmployeeId == employee.Id && a.SchoolId == currentSchoolId)
+    //     .ToListAsync();
+    // if (attendances.Any())
+    //     db.EmployeeAttendances.RemoveRange(attendances);
+
+    // // 🔥 4.3 حذف الإجازات - فقط في المدرسة الحالية
+    // var leaves = await db.Leaves
+    //     .Where(l => l.EmployeeId == employee.Id && l.SchoolId == currentSchoolId)
+    //     .ToListAsync();
+    // if (leaves.Any())
+    //     db.Leaves.RemoveRange(leaves);
+
+    // 🔥 4.4 حذف TeacherAssignments - فقط في المدرسة الحالية
+    var teacherAssignments = await db.TeacherAssignments
+        .Where(t => t.EmployeeId == employee.Id && t.SchoolId == currentSchoolId)
+        .ToListAsync();
+    if (teacherAssignments.Any())
+        db.TeacherAssignments.RemoveRange(teacherAssignments);
+
+    // 🔥 4.5 حذف TeacherSubjects - فقط في المدرسة الحالية
+    var teacherSubjects = await db.TeacherSubjects
+        .Where(t => t.TeacherId == employee.Id && t.SchoolId == currentSchoolId)
+        .ToListAsync();
+    if (teacherSubjects.Any())
+        db.TeacherSubjects.RemoveRange(teacherSubjects);
+
+    // 🔥 4.6 حذف TeacherGrades - فقط في المدرسة الحالية (الأهم!)
+    var allTeacherGrades = await db.TeacherGrades
+        .Where(t => t.TeacherId == employee.Id)
+        .Include(t => t.Section)
+        .ToListAsync();
+
+    var teacherGradesToDelete = allTeacherGrades
+        .Where(t => t.Section != null && t.Section.SchoolId == currentSchoolId)
+        .ToList();
+
+    if (teacherGradesToDelete.Any())
+    {
+        db.TeacherGrades.RemoveRange(teacherGradesToDelete);
+        Console.WriteLine($"✅ تم حذف {teacherGradesToDelete.Count} TeacherGrade من المدرسة {currentSchoolId}");
+    }
+
+    // ============================================
+    // ✅ 5. إلغاء تنشيط العلاقة القديمة فقط
+    // ============================================
     oldEmployeeSchool.IsActive = false;
 
-    // ✅ 5. معالجة الربط في المدرسة الجديدة
+    // ============================================
+    // ✅ 6. إنشاء أو تحديث العلاقة مع المدرسة الجديدة
+    // ============================================
     if (existingInNewSchool != null && !existingInNewSchool.IsActive)
     {
-        // ✅ إذا كان هناك سجل غير نشط، قم بتحديثه بدلاً من إنشاء جديد
         existingInNewSchool.IsActive = true;
         existingInNewSchool.Role = request.NewRole;
         existingInNewSchool.LocalEmployeeNumber = newLocalNumber;
@@ -1459,7 +1592,6 @@ public async Task<IActionResult> TransferEmployee(TransferEmployeeLocalRequest r
     }
     else
     {
-        // ✅ إنشاء ربط جديد
         var newEmployeeSchool = new EmployeeSchool
         {
             EmployeeId = employee.Id,
@@ -1472,38 +1604,27 @@ public async Task<IActionResult> TransferEmployee(TransferEmployeeLocalRequest r
         db.EmployeeSchools.Add(newEmployeeSchool);
     }
 
-    // ✅ 6. معالجة TeacherAssignment
+    // ✅ 7. إذا كان الدور معلم، أضف TeacherAssignment للمدرسة الجديدة فقط
     if (request.NewRole == EmployeeRole.Teacher)
     {
-        // حذف TeacherAssignment القديم
-        var oldAssignment = await db.TeacherAssignments
-            .FirstOrDefaultAsync(t => t.EmployeeId == employee.Id && 
-                                     t.SchoolId == currentSchoolId);
+        var existingAssignment = await db.TeacherAssignments
+            .FirstOrDefaultAsync(t => t.EmployeeId == employee.Id && t.SchoolId == request.NewSchoolId);
 
-        if (oldAssignment is not null)
-            db.TeacherAssignments.Remove(oldAssignment);
-
-        // إضافة TeacherAssignment جديد
-        db.TeacherAssignments.Add(new TeacherAssignment
+        if (existingAssignment is null)
         {
-            EmployeeId = employee.Id,
-            SchoolId = request.NewSchoolId
-        });
-    }
-    else
-    {
-        // إذا لم يعد معلم، احذف TeacherAssignments
-        var oldAssignments = await db.TeacherAssignments
-            .Where(t => t.EmployeeId == employee.Id && t.SchoolId == currentSchoolId)
-            .ToListAsync();
-
-        if (oldAssignments.Any())
-            db.TeacherAssignments.RemoveRange(oldAssignments);
+            db.TeacherAssignments.Add(new TeacherAssignment
+            {
+                EmployeeId = employee.Id,
+                SchoolId = request.NewSchoolId
+            });
+        }
     }
 
     await db.SaveChangesAsync();
 
-    // ✅ إشعار للموظف
+    // ============================================
+    // ✅ 8. إشعار للموظف
+    // ============================================
     await notifier.SendAsync(
         employee.Id,
         UserType.Employee,
@@ -1512,6 +1633,9 @@ public async Task<IActionResult> TransferEmployee(TransferEmployeeLocalRequest r
         "transfer"
     );
 
+    // ============================================
+    // ✅ 9. الرد
+    // ============================================
     return Ok(new
     {
         success = true,
@@ -1528,7 +1652,7 @@ public async Task<IActionResult> TransferEmployee(TransferEmployeeLocalRequest r
                 {
                     id = currentSchoolId,
                     name = currentSchoolName,
-                    localEmployeeNumber = currentLocalNumber,
+                    localEmployeeNumber = request.LocalEmployeeNumber,
                     role = currentRole.ToString(),
                     roleName = currentRoleName
                 },
