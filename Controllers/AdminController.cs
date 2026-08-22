@@ -1514,10 +1514,10 @@ public async Task<IActionResult> TransferEmployee(TransferEmployeeLocalRequest r
     }
 
     // ============================================
-    // ✅ 4. حذف الارتباطات من المدرسة الحالية فقط
+    // ✅ 4. حذف جميع الارتباطات من المدرسة الحالية
     // ============================================
     
-    // 🔥 4.1 تحديث المواد (Subjects) - فقط في المدرسة الحالية
+    // 🔥 4.1 تحديث المواد (Subjects) - إذا كان الموظف معلم
     var subjectsToUpdate = await db.Subjects
         .Where(s => s.TeacherId == employee.Id && s.SchoolId == currentSchoolId)
         .ToListAsync();
@@ -1531,35 +1531,21 @@ public async Task<IActionResult> TransferEmployee(TransferEmployeeLocalRequest r
         Console.WriteLine($"✅ تم تحديث {subjectsToUpdate.Count} مادة في المدرسة {currentSchoolId}");
     }
 
-    // 🔥 4.2 حذف الحضور - فقط في المدرسة الحالية
-    // var attendances = await db.EmployeeAttendances
-    //     .Where(a => a.EmployeeId == employee.Id && a.SchoolId == currentSchoolId)
-    //     .ToListAsync();
-    // if (attendances.Any())
-    //     db.EmployeeAttendances.RemoveRange(attendances);
-
-    // // 🔥 4.3 حذف الإجازات - فقط في المدرسة الحالية
-    // var leaves = await db.Leaves
-    //     .Where(l => l.EmployeeId == employee.Id && l.SchoolId == currentSchoolId)
-    //     .ToListAsync();
-    // if (leaves.Any())
-    //     db.Leaves.RemoveRange(leaves);
-
-    // 🔥 4.4 حذف TeacherAssignments - فقط في المدرسة الحالية
+    // 🔥 4.2 حذف TeacherAssignments - إذا كان الموظف معلم
     var teacherAssignments = await db.TeacherAssignments
         .Where(t => t.EmployeeId == employee.Id && t.SchoolId == currentSchoolId)
         .ToListAsync();
     if (teacherAssignments.Any())
         db.TeacherAssignments.RemoveRange(teacherAssignments);
 
-    // 🔥 4.5 حذف TeacherSubjects - فقط في المدرسة الحالية
+    // 🔥 4.3 حذف TeacherSubjects - إذا كان الموظف معلم
     var teacherSubjects = await db.TeacherSubjects
         .Where(t => t.TeacherId == employee.Id && t.SchoolId == currentSchoolId)
         .ToListAsync();
     if (teacherSubjects.Any())
         db.TeacherSubjects.RemoveRange(teacherSubjects);
 
-    // 🔥 4.6 حذف TeacherGrades - فقط في المدرسة الحالية (الأهم!)
+    // 🔥 4.4 حذف TeacherGrades - إذا كان الموظف معلم
     var allTeacherGrades = await db.TeacherGrades
         .Where(t => t.TeacherId == employee.Id)
         .Include(t => t.Section)
@@ -1574,6 +1560,43 @@ public async Task<IActionResult> TransferEmployee(TransferEmployeeLocalRequest r
         db.TeacherGrades.RemoveRange(teacherGradesToDelete);
         Console.WriteLine($"✅ تم حذف {teacherGradesToDelete.Count} TeacherGrade من المدرسة {currentSchoolId}");
     }
+
+    // 🔥 4.5 إلغاء ربط الموجه (Counselor) من الشعب - إذا كان الموظف موجه
+    if (currentRole == EmployeeRole.Counselor || request.NewRole == EmployeeRole.Counselor)
+    {
+        var counselorSections = await db.Sections
+            .Where(s => s.CounselorId == employee.Id && s.SchoolId == currentSchoolId)
+            .ToListAsync();
+
+        if (counselorSections.Any())
+        {
+            foreach (var section in counselorSections)
+            {
+                section.CounselorId = null;
+            }
+            Console.WriteLine($"✅ تم إلغاء ربط الموجه من {counselorSections.Count} شعبة في المدرسة {currentSchoolId}");
+        }
+    }
+
+    // 🔥 4.6 حذف إعارات الكتب (Librarian) - إذا كان الموظف أمين مكتبة
+    // ملاحظة: إعارات الكتب مرتبطة بالمكتبة وليس بموظف معين، لذلك لا نحذفها
+
+    // 🔥 4.7 إلغاء ربط مشرف النشاطات (Activity Supervisor) - إذا كان الموظف مشرف نشاطات
+    // 🔥 4.7 إلغاء ربط مشرف النشاطات (Activity Supervisor) - إذا كان الموظف مشرف نشاطات
+if (currentRole == EmployeeRole.ActivitySupervisor || request.NewRole == EmployeeRole.ActivitySupervisor)
+{
+    var activities = await db.Activities
+        .Where(a => a.Supervisor != null && a.Supervisor.Id == employee.Id && a.SchoolId == currentSchoolId)
+        .ToListAsync();
+
+    if (activities.Any())
+    {
+        foreach (var activity in activities)
+        {
+            activity.Supervisor = null;
+        }
+    }
+}
 
     // ============================================
     // ✅ 5. إلغاء تنشيط العلاقة القديمة فقط

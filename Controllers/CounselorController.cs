@@ -834,6 +834,10 @@ public async Task<IActionResult> GetFeed()
 // الملف الكامل للطالب - باستخدام Local IDs
 // ============================================
 
+// ============================================
+// الملف الكامل للطالب - باستخدام Local IDs
+// ============================================
+
 [HttpGet("students/{localStudentNumber:int}/full-profile")]
 public async Task<IActionResult> GetStudentFullProfile(int localStudentNumber)
 {
@@ -869,7 +873,7 @@ public async Task<IActionResult> GetStudentFullProfile(int localStudentNumber)
         LocalSectionNumber = student.Section?.LocalSectionNumber ?? 0,
         GradeName = student.Section?.Grade?.Name,
         LocalGradeNumber = student.Section?.Grade?.LocalGradeNumber ?? 0,
-        GradeLevel = student.Section?.Grade?.Level ?? 0,  // ✅ إضافة المستوى
+        GradeLevel = student.Section?.Grade?.Level ?? 0,
         student.GuardianName,
         student.GuardianPhone,
         student.BloodType,
@@ -882,7 +886,7 @@ public async Task<IActionResult> GetStudentFullProfile(int localStudentNumber)
         student.CreatedAt
     };
 
-    // ✅ معلومات الشعبة والصف (بدون AcademicYear)
+    // ✅ معلومات الشعبة والصف
     var sectionInfo = new
     {
         section.Id,
@@ -890,7 +894,7 @@ public async Task<IActionResult> GetStudentFullProfile(int localStudentNumber)
         LocalSectionNumber = section.LocalSectionNumber,
         GradeName = section.Grade?.Name ?? "",
         LocalGradeNumber = section.Grade?.LocalGradeNumber ?? 0,
-        GradeLevel = section.Grade?.Level ?? 0  // ✅ إضافة المستوى
+        GradeLevel = section.Grade?.Level ?? 0
     };
 
     // ✅ المواد الدراسية
@@ -979,9 +983,9 @@ public async Task<IActionResult> GetStudentFullProfile(int localStudentNumber)
         })
         .ToListAsync();
 
-    // ✅ الحضور (تجاهل المحذوف)
+    // ✅ الحضور (تجاهل المحذوف) - ✅ تم التعديل هنا
     var attendance = await db.StudentAttendances
-        .Where(a => a.StudentId == student.Id && !a.IsDeleted)
+        .Where(a => a.StudentId == student.Id && !a.IsDeleted)  // ✅ إضافة شرط IsDeleted
         .OrderByDescending(a => a.Date)
         .Take(200)
         .Select(a => new
@@ -1151,7 +1155,7 @@ public async Task<IActionResult> GetStudentFullProfile(int localStudentNumber)
             Subjects = subjects,
             Marks = marks,
             ReportCards = reportCards,
-            Attendance = attendance,
+            Attendance = attendance,  // ✅ الآن لا يحتوي على الغيابات المحذوفة
             Library = new
             {
                 Loans = loans,

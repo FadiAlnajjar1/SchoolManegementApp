@@ -1757,142 +1757,149 @@ public class ManagerController(
         });
     }
 
-    [HttpPut("employees/{localEmployeeNumber:int}")]
-    public async Task<IActionResult> UpdateEmployee(int localEmployeeNumber, EmployeeUpdateLocalRequest request)
+   [HttpPut("employees/{localEmployeeNumber:int}")]
+public async Task<IActionResult> UpdateEmployee(int localEmployeeNumber, EmployeeUpdateLocalRequest request)
+{
+    var employeeSchool = await db.EmployeeSchools
+        .Include(es => es.Employee)
+        .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
+                                  es.LocalEmployeeNumber == localEmployeeNumber &&
+                                  es.IsActive);
+
+    if (employeeSchool is null)
+        return NotFound(new { success = false, message = $"لا يوجد موظف برقم {localEmployeeNumber} في هذه المدرسة" });
+
+    var employee = employeeSchool.Employee;
+    if (employee is null)
+        return NotFound(new { success = false, message = "الموظف غير موجود" });
+
+    if (!string.IsNullOrWhiteSpace(request.Name))
+        employee.Name = request.Name;
+
+    // ✅ تعديل التحقق من البريد الإلكتروني
+    if (!string.IsNullOrWhiteSpace(request.Email) && request.Email != employee.Email)
     {
-        var employeeSchool = await db.EmployeeSchools
-            .Include(es => es.Employee)
-            .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
-                                      es.LocalEmployeeNumber == localEmployeeNumber &&
-                                      es.IsActive);
+        var existingEmployeeWithEmail = await db.Employees
+            .FirstOrDefaultAsync(e => e.Email == request.Email && e.Id != employee.Id);
 
-        if (employeeSchool is null)
-            return NotFound(new { success = false, message = $"لا يوجد موظف برقم {localEmployeeNumber} في هذه المدرسة" });
-
-        var employee = employeeSchool.Employee;
-        if (employee is null)
-            return NotFound(new { success = false, message = "الموظف غير موجود" });
-
-        if (!string.IsNullOrWhiteSpace(request.Name))
-            employee.Name = request.Name;
-
-        if (!string.IsNullOrWhiteSpace(request.Email) && request.Email != employee.Email)
+        if (existingEmployeeWithEmail is not null)
         {
-            var existingEmail = await db.Employees
-                .FirstOrDefaultAsync(e => e.Email == request.Email && e.Id != employee.Id);
-
-            if (existingEmail is not null)
+            // ✅ يسمح إذا كان الرقم الوطني هو نفسه
+            if (existingEmployeeWithEmail.NationalId != employee.NationalId)
             {
                 return BadRequest(new { 
                     success = false, 
-                    message = "البريد الإلكتروني مستخدم بالفعل من قبل موظف آخر" 
+                    message = "البريد الإلكتروني مستخدم بالفعل من قبل موظف آخر برقم وطني مختلف" 
                 });
             }
-
-            employee.Email = request.Email;
+            // إذا كان الرقم الوطني هو نفسه، نسمح بتحديث البريد
         }
 
-        if (!string.IsNullOrWhiteSpace(request.NationalId) && request.NationalId != employee.NationalId)
-        {
-            var existingNationalId = await db.Employees
-                .FirstOrDefaultAsync(e => e.NationalId == request.NationalId && e.Id != employee.Id);
-
-            if (existingNationalId is not null)
-            {
-                return BadRequest(new { 
-                    success = false, 
-                    message = "الرقم الوطني مستخدم بالفعل من قبل موظف آخر" 
-                });
-            }
-
-            employee.NationalId = request.NationalId;
-        }
-
-        if (!string.IsNullOrWhiteSpace(request.Phone))
-            employee.Phone = request.Phone;
-
-        if (!string.IsNullOrWhiteSpace(request.Address))
-            employee.Address = request.Address;
-
-        if (request.BirthDate.HasValue)
-        {
-            var age = CalculateAge(request.BirthDate.Value);
-            if (age < 18)
-                return BadRequest(new { success = false, message = "عمر الموظف يجب أن يكون 18 سنة على الأقل" });
-                
-            employee.BirthDate = request.BirthDate;
-        }
-
-        if (!string.IsNullOrWhiteSpace(request.Qualification))
-            employee.Qualification = request.Qualification;
-
-        if (!string.IsNullOrWhiteSpace(request.Password))
-            employee.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
-
-        if (request.Role.HasValue && request.Role.Value != employeeSchool.Role)
-        {
-            if (IsUniqueRole(request.Role.Value))
-            {
-                var existingRole = await db.EmployeeSchools
-                    .AnyAsync(es => es.Role == request.Role.Value &&
-                                   es.SchoolId == SchoolId &&
-                                   es.EmployeeId != employee.Id &&
-                                   es.IsActive);
-
-                if (existingRole)
-                    return BadRequest(new { success = false, message = $"الدور '{GetRoleName(request.Role.Value)}' مشغول بالفعل في هذه المدرسة" });
-            }
-
-            if (request.Role.Value == EmployeeRole.Teacher)
-            {
-                var existingAssignment = await db.TeacherAssignments
-                    .FirstOrDefaultAsync(t => t.EmployeeId == employee.Id && t.SchoolId == SchoolId);
-
-                if (existingAssignment is null)
-                {
-                    db.TeacherAssignments.Add(new TeacherAssignment
-                    {
-                        EmployeeId = employee.Id,
-                        SchoolId = SchoolId
-                    });
-                }
-            }
-            else
-            {
-                var assignments = await db.TeacherAssignments
-                    .Where(t => t.EmployeeId == employee.Id && t.SchoolId == SchoolId)
-                    .ToListAsync();
-
-                if (assignments.Any())
-                    db.TeacherAssignments.RemoveRange(assignments);
-            }
-
-            employeeSchool.Role = request.Role.Value;
-        }
-
-        await db.SaveChangesAsync();
-
-        return Ok(new
-        {
-            success = true,
-            message = "تم تحديث بيانات الموظف بنجاح",
-            data = new
-            {
-                employee.Id,
-                employee.Name,
-                employee.Email,
-                LocalEmployeeNumber = localEmployeeNumber,
-                employee.NationalId,
-                employee.Phone,
-                employee.Address,
-                employee.BirthDate,
-                employee.Qualification,
-                Role = employeeSchool.Role.ToString(),
-                RoleName = GetRoleName(employeeSchool.Role),
-                employee.CreatedAt
-            }
-        });
+        employee.Email = request.Email;
     }
+
+    if (!string.IsNullOrWhiteSpace(request.NationalId) && request.NationalId != employee.NationalId)
+    {
+        var existingNationalId = await db.Employees
+            .FirstOrDefaultAsync(e => e.NationalId == request.NationalId && e.Id != employee.Id);
+
+        if (existingNationalId is not null)
+        {
+            return BadRequest(new { 
+                success = false, 
+                message = "الرقم الوطني مستخدم بالفعل من قبل موظف آخر" 
+            });
+        }
+
+        employee.NationalId = request.NationalId;
+    }
+
+    if (!string.IsNullOrWhiteSpace(request.Phone))
+        employee.Phone = request.Phone;
+
+    if (!string.IsNullOrWhiteSpace(request.Address))
+        employee.Address = request.Address;
+
+    if (request.BirthDate.HasValue)
+    {
+        var age = CalculateAge(request.BirthDate.Value);
+        if (age < 18)
+            return BadRequest(new { success = false, message = "عمر الموظف يجب أن يكون 18 سنة على الأقل" });
+            
+        employee.BirthDate = request.BirthDate;
+    }
+
+    if (!string.IsNullOrWhiteSpace(request.Qualification))
+        employee.Qualification = request.Qualification;
+
+    // ✅ كلمة المرور اختيارية (إذا تم إرسالها فقط)
+    if (!string.IsNullOrWhiteSpace(request.Password))
+        employee.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
+
+    if (request.Role.HasValue && request.Role.Value != employeeSchool.Role)
+    {
+        if (IsUniqueRole(request.Role.Value))
+        {
+            var existingRole = await db.EmployeeSchools
+                .AnyAsync(es => es.Role == request.Role.Value &&
+                               es.SchoolId == SchoolId &&
+                               es.EmployeeId != employee.Id &&
+                               es.IsActive);
+
+            if (existingRole)
+                return BadRequest(new { success = false, message = $"الدور '{GetRoleName(request.Role.Value)}' مشغول بالفعل في هذه المدرسة" });
+        }
+
+        if (request.Role.Value == EmployeeRole.Teacher)
+        {
+            var existingAssignment = await db.TeacherAssignments
+                .FirstOrDefaultAsync(t => t.EmployeeId == employee.Id && t.SchoolId == SchoolId);
+
+            if (existingAssignment is null)
+            {
+                db.TeacherAssignments.Add(new TeacherAssignment
+                {
+                    EmployeeId = employee.Id,
+                    SchoolId = SchoolId
+                });
+            }
+        }
+        else
+        {
+            var assignments = await db.TeacherAssignments
+                .Where(t => t.EmployeeId == employee.Id && t.SchoolId == SchoolId)
+                .ToListAsync();
+
+            if (assignments.Any())
+                db.TeacherAssignments.RemoveRange(assignments);
+        }
+
+        employeeSchool.Role = request.Role.Value;
+    }
+
+    await db.SaveChangesAsync();
+
+    return Ok(new
+    {
+        success = true,
+        message = "تم تحديث بيانات الموظف بنجاح",
+        data = new
+        {
+            employee.Id,
+            employee.Name,
+            employee.Email,
+            LocalEmployeeNumber = localEmployeeNumber,
+            employee.NationalId,
+            employee.Phone,
+            employee.Address,
+            employee.BirthDate,
+            employee.Qualification,
+            Role = employeeSchool.Role.ToString(),
+            RoleName = GetRoleName(employeeSchool.Role),
+            employee.CreatedAt
+        }
+    });
+}
 
     [HttpDelete("employees/{localEmployeeNumber:int}")]
     public async Task<IActionResult> DeleteEmployee(int localEmployeeNumber)
@@ -4178,6 +4185,163 @@ public class ManagerController(
             return BadRequest(new { success = false, message = ex.Message });
         }
     }
+    // ============================================
+// جلب جميع الموظفين في المدرسة
+// ============================================
+
+[HttpGet("employees")]
+public async Task<IActionResult> GetEmployees()
+{
+    var employees = await db.EmployeeSchools
+        .Include(es => es.Employee)
+        .Where(es => es.SchoolId == SchoolId && es.IsActive)
+        .OrderBy(es => es.LocalEmployeeNumber)
+        .Select(es => new
+        {
+            es.LocalEmployeeNumber,
+            es.EmployeeId,
+            es.Employee!.Name,
+            es.Employee.Email,
+            es.Employee.NationalId,
+            es.Employee.Phone,
+            es.Employee.Address,
+            es.Employee.BirthDate,
+            es.Employee.Qualification,
+            es.Employee.CreatedAt,
+            es.Role,
+            RoleName = GetRoleName(es.Role),
+            es.IsActive,
+            // ✅ عدد الشعب التي يشرف عليها (إذا كان موجه)
+            SectionsCount = es.Role == EmployeeRole.Counselor ? 
+                db.Sections.Count(s => s.CounselorId == es.EmployeeId && s.SchoolId == SchoolId) : 0,
+            // ✅ عدد المواد التي يدرسها (إذا كان معلم)
+            SubjectsCount = es.Role == EmployeeRole.Teacher ? 
+                db.TeacherGrades.Count(tg => tg.TeacherId == es.EmployeeId && 
+                                            tg.Section != null && 
+                                            tg.Section.SchoolId == SchoolId) : 0,
+            // ✅ عدد الشعب التي يدرس فيها (إذا كان معلم)
+            TeachingSectionsCount = es.Role == EmployeeRole.Teacher ? 
+                db.TeacherGrades
+                    .Where(tg => tg.TeacherId == es.EmployeeId && 
+                                 tg.Section != null && 
+                                 tg.Section.SchoolId == SchoolId)
+                    .Select(tg => tg.SectionId)
+                    .Distinct()
+                    .Count() : 0
+        })
+        .ToListAsync();
+
+    return Ok(new
+    {
+        success = true,
+        message = "تم جلب الموظفين بنجاح",
+        data = new
+        {
+            totalEmployees = employees.Count,
+            employees = employees
+        }
+    });
+}
+
+// ============================================
+// جلب موظف محدد باستخدام LocalEmployeeNumber
+// ============================================
+
+[HttpGet("employees/{localEmployeeNumber:int}")]
+public async Task<IActionResult> GetEmployee(int localEmployeeNumber)
+{
+    var employeeSchool = await db.EmployeeSchools
+        .Include(es => es.Employee)
+        .FirstOrDefaultAsync(es => es.SchoolId == SchoolId &&
+                                  es.LocalEmployeeNumber == localEmployeeNumber &&
+                                  es.IsActive);
+
+    if (employeeSchool is null)
+        return NotFound(new { 
+            success = false, 
+            message = $"لا يوجد موظف برقم {localEmployeeNumber} في هذه المدرسة" 
+        });
+
+    var employee = employeeSchool.Employee;
+    if (employee is null)
+        return NotFound(new { success = false, message = "الموظف غير موجود" });
+
+    // ✅ جلب معلومات إضافية حسب دور الموظف
+    object? additionalInfo = null;
+
+    if (employeeSchool.Role == EmployeeRole.Teacher)
+    {
+        var sections = await db.TeacherGrades
+            .Where(tg => tg.TeacherId == employee.Id && 
+                         tg.Section != null && 
+                         tg.Section.SchoolId == SchoolId)
+            .Select(tg => new
+            {
+                tg.SectionId,
+                SectionName = tg.Section != null ? tg.Section.Name : null,
+                LocalSectionNumber = tg.Section != null ? tg.Section.LocalSectionNumber : 0,
+                GradeName = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.Name : null,
+                LocalGradeNumber = tg.Section != null && tg.Section.Grade != null ? tg.Section.Grade.LocalGradeNumber : 0,
+                tg.SubjectId,
+                SubjectName = tg.Subject != null ? tg.Subject.Name : null,
+                LocalSubjectId = tg.Subject != null ? tg.Subject.LocalSubjectId : 0
+            })
+            .ToListAsync();
+
+        additionalInfo = new
+        {
+            TeachingSections = sections,
+            TotalSections = sections.Count,
+            Subjects = sections.Select(s => new { s.SubjectId, s.SubjectName, s.LocalSubjectId }).Distinct().ToList(),
+            TotalSubjects = sections.Select(s => s.SubjectId).Distinct().Count()
+        };
+    }
+    else if (employeeSchool.Role == EmployeeRole.Counselor)
+    {
+        var sections = await db.Sections
+            .Where(s => s.CounselorId == employee.Id && s.SchoolId == SchoolId)
+            .Select(s => new
+            {
+                s.Id,
+                s.Name,
+                s.LocalSectionNumber,
+                GradeName = s.Grade != null ? s.Grade.Name : null,
+                LocalGradeNumber = s.Grade != null ? s.Grade.LocalGradeNumber : 0,
+                StudentsCount = db.Students.Count(st => st.SectionId == s.Id && st.IsActive && st.SchoolId == SchoolId)
+            })
+            .ToListAsync();
+
+        additionalInfo = new
+        {
+            SupervisedSections = sections,
+            TotalSections = sections.Count,
+            TotalStudents = sections.Sum(s => s.StudentsCount)
+        };
+    }
+
+    return Ok(new
+    {
+        success = true,
+        message = "تم جلب بيانات الموظف بنجاح",
+        data = new
+        {
+            employee.Id,
+            employee.Name,
+            employee.Email,
+            employee.NationalId,
+            employee.Phone,
+            employee.Address,
+            employee.BirthDate,
+            employee.Qualification,
+            employee.CreatedAt,
+            LocalEmployeeNumber = employeeSchool.LocalEmployeeNumber,
+            Role = employeeSchool.Role.ToString(),
+            RoleName = GetRoleName(employeeSchool.Role),
+            IsActive = employeeSchool.IsActive,
+            AdditionalInfo = additionalInfo
+        }
+    });
+}
 
     // ============================================
     // جلب الطلاب الراسبين في جميع الصفوف
